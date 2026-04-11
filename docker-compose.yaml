@@ -1,1 +1,4 @@
-
+volumes:
+  - ./batch_pipeline/orchestration:/opt/airflow/dags  # Point Airflow to your DAG folder
+  - ./batch_pipeline:/opt/airflow/batch_pipeline      # Mount your batch code
+  - ./config:/opt/airflow/config                      # Mount your config
