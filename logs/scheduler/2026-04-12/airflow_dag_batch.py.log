@@ -1,0 +1,15 @@
+[2026-04-12T08:36:32.892+0000] {processor.py:186} INFO - Started process (PID=48) to work on /opt/airflow/dags/airflow_dag_batch.py
+[2026-04-12T08:36:32.894+0000] {processor.py:914} INFO - Processing file /opt/airflow/dags/airflow_dag_batch.py for tasks to queue
+[2026-04-12T08:36:32.898+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:32.897+0000] {dagbag.py:588} INFO - Filling up the DagBag from /opt/airflow/dags/airflow_dag_batch.py
+[2026-04-12T08:36:32.937+0000] {processor.py:925} INFO - DAG(s) 'crypto_full_pipeline' retrieved from /opt/airflow/dags/airflow_dag_batch.py
+[2026-04-12T08:36:33.049+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.048+0000] {override.py:1901} INFO - Created Permission View: can delete on DAG:crypto_full_pipeline
+[2026-04-12T08:36:33.064+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.063+0000] {override.py:1901} INFO - Created Permission View: can edit on DAG:crypto_full_pipeline
+[2026-04-12T08:36:33.074+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.074+0000] {override.py:1901} INFO - Created Permission View: can read on DAG:crypto_full_pipeline
+[2026-04-12T08:36:33.089+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.088+0000] {override.py:1901} INFO - Created Permission View: can delete on DAG Run:crypto_full_pipeline
+[2026-04-12T08:36:33.103+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.103+0000] {override.py:1901} INFO - Created Permission View: can create on DAG Run:crypto_full_pipeline
+[2026-04-12T08:36:33.115+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.114+0000] {override.py:1901} INFO - Created Permission View: menu access on DAG Run:crypto_full_pipeline
+[2026-04-12T08:36:33.126+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.125+0000] {override.py:1901} INFO - Created Permission View: can read on DAG Run:crypto_full_pipeline
+[2026-04-12T08:36:33.127+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.126+0000] {dag.py:3239} INFO - Sync 1 DAGs
+[2026-04-12T08:36:33.144+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.144+0000] {dag.py:3262} INFO - Creating ORM DAG for crypto_full_pipeline
+[2026-04-12T08:36:33.145+0000] {logging_mixin.py:190} INFO - [2026-04-12T08:36:33.145+0000] {dag.py:4180} INFO - Setting next_dagrun for crypto_full_pipeline to None, run_after=None
+[2026-04-12T08:36:33.176+0000] {processor.py:208} INFO - Processing /opt/airflow/dags/airflow_dag_batch.py took 0.292 seconds
