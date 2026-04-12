@@ -1,28 +1,43 @@
+from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.providers.databricks.operators.databricks import DatabricksRunNowOperator
-from datetime import datetime
+
+# --- CONFIGURATION ---
+# Your specific Databricks Job IDs
+FETCHER_JOB_ID = "456608304761514"
+TRANSFORM_JOB_ID = "295662145766571"
+
+default_args = {
+    'owner': 'neha',
+    'depends_on_past': False,
+    'email_on_failure': True,
+    'email': ['1492neha@gmail.com'],
+    'start_date': datetime(2024, 1, 1),
+    'retries': 1,
+    'retry_delay': timedelta(minutes=5),
+}
 
 with DAG(
-    dag_id='crypto_full_pipeline',
-    start_date=datetime(2024, 1, 1),
-    schedule_interval=None,
+    'crypto_databricks_pipeline',
+    default_args=default_args,
+    description='Orchestrating Databricks Jobs for Crypto Lakehouse',
+    schedule_interval='@hourly',
     catchup=False
 ) as dag:
 
-    # 1. First Task: Runs the Ingestion Job (Fetcher + Uploader)
-    run_ingestion = DatabricksRunNowOperator(
-        task_id='ingest_to_s3',
-        databricks_conn_id='databricks_default',
-        job_id=456608304761514  # Use the first ID here
+    # Task 1: Trigger Fetcher & Uploader Job
+    ingest_task = DatabricksRunNowOperator(
+        task_id='trigger_fetcher_uploader',
+        databricks_conn_id='databricks_default', # Ensure this matches your Airflow Connection
+        job_id=FETCHER_JOB_ID
     )
 
-    # 2. Second Task: Runs the Transformation Job (Silver + Gold)
-    run_transformation = DatabricksRunNowOperator(
-        task_id='transform_and_load',
+    # Task 2: Trigger Transformations (Bronze -> Silver -> Gold)
+    transform_task = DatabricksRunNowOperator(
+        task_id='trigger_transformations',
         databricks_conn_id='databricks_default',
-        job_id=295662145766571 # Use the second ID here
+        job_id=TRANSFORM_JOB_ID
     )
 
-    # THIS IS THE CONNECTION
-    # It tells Airflow: Run Ingestion first, and ONLY if it succeeds, run Transformation.
-    run_ingestion >> run_transformation
+    # Define Dependency
+    ingest_task >> transform_task
