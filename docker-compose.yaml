@@ -15,7 +15,7 @@ x-airflow-common:
     AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
   volumes:
     # This matches the path you provided: A:\Crypto-Data-lakehouse-pipeline\crypto-Data-lakehouse-pipeline\batch_pipeline\orchestration
-    - ./crypto-Data-lakehouse-pipeline/batch_pipeline/orchestration:/opt/airflow/dags
+    - /a/Crypto-Data-lakehouse-pipeline/crypto-Data-lakehouse-pipeline/batch_pipeline/orchestration:/opt/airflow/dags
     - ./logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on:
