@@ -3,7 +3,7 @@ from airflow.providers.databricks.operators.databricks import DatabricksRunNowOp
 from datetime import datetime
 
 with DAG(
-    dag_id='crypto_lakehouse_full_pipeline',
+    dag_id='crypto_full_pipeline',
     start_date=datetime(2024, 1, 1),
     schedule_interval=None,
     catchup=False
