@@ -9,18 +9,14 @@ COINS = "bitcoin,ethereum,solana"
 CURRENCY = "usd"
 BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
 KAFKA_TOPIC = "crypto_prices"
-AIVEN_SERVICE_URI = "kafka-16a146bd-cryptoproject123.k.aivencloud.com:10109"
-# 2. KAFKA PRODUCER SETUP
+# Local Docker Kafka address
+KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+
+# 2. KAFKA PRODUCER SETUP (Simple Plaintext)
 conf = {
-    'bootstrap.servers': AIVEN_SERVICE_URI,
-    'security.protocol': 'SSL',
-    'ssl.ca.location': 'ca.pem',
-    'ssl.certificate.location': 'service.cert',
-    'ssl.key.location': 'service.key',
+    'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
     'client.id': socket.gethostname()
 }
-
-producer = Producer(conf)
 
 # Callback function to confirm delivery
 def delivery_report(err, msg):
@@ -30,49 +26,44 @@ def delivery_report(err, msg):
         print(f"✅ Message delivered to {msg.topic()} [{msg.partition()}]")
 
 def run_kafka_producer():
-    start_time = datetime.now()
-    print(f"[{start_time.strftime('%Y-%m-%d %H:%M:%S')}] INFO: Starting Kafka Producer...")
-
-    # --- 1. FETCH FROM API ---
-    params = {
-        'ids': COINS, 'vs_currencies': CURRENCY,
-        'include_market_cap': 'true', 'include_24hr_vol': 'true',
-        'include_last_updated_at': 'true'
-    }
-    
     try:
-        print(f"INFO: Fetching data for: {COINS}...")
+        print("INFO: Initializing Local Kafka Producer...")
+        producer = Producer(conf)
+        
+        start_time = datetime.now()
+        
+        # --- FETCH ---
+        params = {
+            'ids': COINS, 'vs_currencies': CURRENCY,
+            'include_market_cap': 'true', 'include_24hr_vol': 'true',
+            'include_last_updated_at': 'true'
+        }
+        
+        print(f"INFO: Fetching data from CoinGecko...")
         response = requests.get(BASE_URL, params=params)
         response.raise_for_status()
         data = response.json()
         
-        # Add Metadata
         data['ingestion_metadata'] = {
             "source": "CoinGecko API",
             "ingested_at": datetime.now().isoformat()
         }
 
-        # --- 2. PRODUCE TO KAFKA ---
-        print(f"INFO: Sending data to Kafka Topic: {KAFKA_TOPIC}...")
-        
-        # Convert dictionary to JSON string
+        # --- PRODUCE ---
+        print(f"INFO: Sending data to Local Kafka Topic: {KAFKA_TOPIC}...")
         json_payload = json.dumps(data)
         
-        # Send to Kafka
         producer.produce(
             KAFKA_TOPIC, 
             value=json_payload, 
             callback=delivery_report
         )
 
-        # Wait for any outstanding messages to be delivered
         producer.flush()
-        
-        print(f"INFO: Production completed in {(datetime.now() - start_time).total_seconds():.2f} seconds.")
+        print(f"INFO: Completed in {(datetime.now() - start_time).total_seconds():.2f} seconds.")
 
     except Exception as e:
         print(f"❌ FAILED: {e}")
-        raise e
 
 if __name__ == "__main__":
     run_kafka_producer()
