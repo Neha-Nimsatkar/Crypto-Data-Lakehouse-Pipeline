@@ -9,11 +9,14 @@ COINS = "bitcoin,ethereum,solana"
 CURRENCY = "usd"
 BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
 KAFKA_TOPIC = "crypto_prices"
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
-
+AIVEN_SERVICE_URI = "kafka-16a146bd-cryptoproject123.k.aivencloud.com:10109"
 # 2. KAFKA PRODUCER SETUP
 conf = {
-    'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
+    'bootstrap.servers': AIVEN_SERVICE_URI,
+    'security.protocol': 'SSL',
+    'ssl.ca.location': 'ca.pem',
+    'ssl.certificate.location': 'service.cert',
+    'ssl.key.location': 'service.key',
     'client.id': socket.gethostname()
 }
 
