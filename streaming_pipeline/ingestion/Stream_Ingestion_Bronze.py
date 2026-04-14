@@ -1,8 +1,18 @@
 import os
 import sys
 
-# 1. SET JAVA 11 ENVIRONMENT (Using the path you found)
+from pyspark.sql import SparkSession
+
+# 1. Java 11 Path (Already there)
 java_home = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
+os.environ["JAVA_HOME"] = java_home
+os.environ["PATH"] = os.path.join(java_home, "bin") + os.path.pathsep + os.environ["PATH"]
+
+# 2. ADD THIS: Hadoop Home Path
+os.environ["HADOOP_HOME"] = r"C:\hadoop"
+os.environ["PATH"] = os.path.join(r"C:\hadoop", "bin") + os.path.pathsep + os.environ["PATH"]
+
+# ... rest of your code ...
 
 if os.path.exists(java_home):
     os.environ["JAVA_HOME"] = java_home
@@ -44,7 +54,7 @@ schema = StructType([
 print("INFO: Connecting to Kafka...")
 raw_stream_df = spark.readStream \
     .format("kafka") \
-    .option("kafka.bootstrap.servers", "127.0.0.1:9092") \
+    .option("kafka.bootstrap.servers", "localhost:9092") \
     .option("subscribe", "crypto_prices") \
     .option("startingOffsets", "earliest") \
     .load()
