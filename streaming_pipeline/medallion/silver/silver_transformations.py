@@ -1,54 +1,52 @@
 import os
 from pyspark.sql import SparkSession, functions as f
-from pyspark.sql.types import StructType, StructField, DoubleType, StringType, MapType
-from delta import configure_spark_with_delta_pip # Added this
+from delta import configure_spark_with_delta_pip
 
 # 1. ENV SETUP
 os.environ["JAVA_HOME"] = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 
-# Updated SparkSession Builder
+# Create temp folder for Spark to avoid ShutdownHook errors
+temp_path = "A:/Crypto-Data-lakehouse-pipeline/data/spark_temp"
+if not os.path.exists(temp_path):
+    os.makedirs(temp_path)
+
 builder = SparkSession.builder \
     .appName("Crypto_Silver_Streaming") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
     .config("spark.sql.warehouse.dir", "A:/Crypto-Data-lakehouse-pipeline/spark-warehouse") \
-    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0") # Forces download of Delta JARs
+    .config("spark.local.dir", temp_path) \
+    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0")
 
-# Use configure_spark_with_delta_pip
 spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
-# 2. DEFINE JSON SCHEMA
-json_schema = MapType(StringType(), StructType([
-    StructField("usd", DoubleType()),
-    StructField("usd_market_cap", DoubleType()),
-    StructField("usd_24h_vol", DoubleType()),
-    StructField("last_updated_at", DoubleType())
-]))
-
-# 3. READ STREAM FROM BRONZE
+# 2. READ STREAM FROM BRONZE
 bronze_path = "A:/Crypto-Data-lakehouse-pipeline/data/bronze/crypto_prices_delta"
 df_stream = spark.readStream.format("delta").load(bronze_path)
 
-# 4. TRANSFORMATION & QUALITY FILTERING
-df_parsed = df_stream.select(
-    f.from_json(f.col("value").cast("string"), json_schema).alias("data"),
-    f.col("timestamp").alias("kafka_arrival_time")
+# 3. TRANSFORMATION (Fixed for your specific Bronze schema)
+# Your Bronze has columns: bitcoin, ethereum, solana, ingestion_metadata
+# We combine them into a clean, normalized format
+coins = ["bitcoin", "ethereum", "solana"]
+
+# We use stack to turn columns into rows (Normalization)
+stack_str = ", ".join([f"'{c}', {c}.usd, {c}.usd_market_cap, {c}.usd_24h_vol, {c}.last_updated_at" for c in coins])
+
+df_normalized = df_stream.select(
+    f.expr(f"stack({len(coins)}, {stack_str}) as (coin_id, price_usd, market_cap, volume_24h, updated_at)"),
+    f.col("ingestion_metadata.ingested_at").alias("ingested_at")
 )
 
-df_exploded = df_parsed.select(
-    f.explode(f.col("data")).alias("coin_id", "metrics"),
-    "kafka_arrival_time"
-)
-
-df_cleaned = df_exploded.select(
-    f.lower(f.col("coin_id")).alias("coin_id"),
-    f.col("metrics.usd").alias("price_usd"),
-    f.col("metrics.usd_market_cap").alias("market_cap"),
-    f.col("metrics.usd_24h_vol").alias("volume_24h"),
-    f.to_timestamp(f.from_unixtime(f.col("metrics.last_updated_at"))).alias("event_timestamp"),
-    f.col("kafka_arrival_time").alias("ingested_at")
-).withWatermark("event_timestamp", "10 minutes") 
+# 4. CLEANING & WATERMARKING
+df_cleaned = df_normalized.select(
+    "coin_id",
+    "price_usd",
+    "market_cap",
+    "volume_24h",
+    f.to_timestamp(f.from_unixtime(f.col("updated_at"))).alias("event_timestamp"),
+    "ingested_at"
+).withWatermark("event_timestamp", "10 minutes")
 
 # 5. DEDUPLICATION
 df_deduped = df_cleaned.dropDuplicates(["coin_id", "event_timestamp"])
