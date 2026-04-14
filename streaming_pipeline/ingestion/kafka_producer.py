@@ -10,7 +10,7 @@ CURRENCY = "usd"
 BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
 KAFKA_TOPIC = "crypto_prices"
 # Local Docker Kafka address
-KAFKA_BOOTSTRAP_SERVERS = "localhost:9092"
+KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:9092"
 
 # 2. KAFKA PRODUCER SETUP (Simple Plaintext)
 conf = {
