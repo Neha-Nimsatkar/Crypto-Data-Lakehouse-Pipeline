@@ -1,19 +1,24 @@
 import os
 from pyspark.sql import SparkSession, functions as f
 from pyspark.sql.types import StructType, StructField, DoubleType, StringType, MapType
+from delta import configure_spark_with_delta_pip # Added this
 
-# 1. ENV SETUP (Local Paths)
+# 1. ENV SETUP
 os.environ["JAVA_HOME"] = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 
-spark = SparkSession.builder \
+# Updated SparkSession Builder
+builder = SparkSession.builder \
     .appName("Crypto_Silver_Streaming") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .getOrCreate()
+    .config("spark.sql.warehouse.dir", "A:/Crypto-Data-lakehouse-pipeline/spark-warehouse") \
+    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0") # Forces download of Delta JARs
 
-# 2. DEFINE JSON SCHEMA (Essential for Streaming)
-# This matches your CoinGecko JSON structure
+# Use configure_spark_with_delta_pip
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+# 2. DEFINE JSON SCHEMA
 json_schema = MapType(StringType(), StructType([
     StructField("usd", DoubleType()),
     StructField("usd_market_cap", DoubleType()),
@@ -26,20 +31,16 @@ bronze_path = "A:/Crypto-Data-lakehouse-pipeline/data/bronze/crypto_prices_delta
 df_stream = spark.readStream.format("delta").load(bronze_path)
 
 # 4. TRANSFORMATION & QUALITY FILTERING
-# Converting Binary value from Kafka/Bronze to Strings and Map
 df_parsed = df_stream.select(
     f.from_json(f.col("value").cast("string"), json_schema).alias("data"),
     f.col("timestamp").alias("kafka_arrival_time")
 )
 
-# Flattening the Map (Replacing your 'Create Map' logic with a dynamic Explode)
 df_exploded = df_parsed.select(
     f.explode(f.col("data")).alias("coin_id", "metrics"),
     "kafka_arrival_time"
 )
 
-# Cleaning, Casting, and Watermarking
-# WATERMARK: Tells Spark to only keep 10 minutes of data in memory for deduplication
 df_cleaned = df_exploded.select(
     f.lower(f.col("coin_id")).alias("coin_id"),
     f.col("metrics.usd").alias("price_usd"),
@@ -49,8 +50,7 @@ df_cleaned = df_exploded.select(
     f.col("kafka_arrival_time").alias("ingested_at")
 ).withWatermark("event_timestamp", "10 minutes") 
 
-# 5. DEDUPLICATION (Streaming version)
-# In streaming, we use dropDuplicates instead of row_number() window for better performance
+# 5. DEDUPLICATION
 df_deduped = df_cleaned.dropDuplicates(["coin_id", "event_timestamp"])
 
 # 6. WRITE STREAM TO SILVER

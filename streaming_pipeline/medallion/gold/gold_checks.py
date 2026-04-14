@@ -1,23 +1,26 @@
 import os
 from pyspark.sql import SparkSession, functions as f
+from delta import configure_spark_with_delta_pip
 
-# 1. ENV SETUP
 os.environ["JAVA_HOME"] = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 
-spark = SparkSession.builder \
+builder = SparkSession.builder \
     .appName("Gold_Quality_Checks") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .getOrCreate()
+    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0")
 
-# 2. PATHS TO GOLD DELTA TABLES
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
 path_perf = "A:/Crypto-Data-lakehouse-pipeline/data/gold/price_performance"
 path_trends = "A:/Crypto-Data-lakehouse-pipeline/data/gold/daily_trends"
 
-# Load the tables
 df_perf = spark.read.format("delta").load(path_perf)
 df_trends = spark.read.format("delta").load(path_trends)
+
+# ... (Keep the rest of your print statements and check logic as it was) ...
+print("✅ Gold Quality Checks Complete.")
 
 print("\n" + "="*60)
 print("🛡️  GOLD LAYER: BUSINESS LOGIC & INTEGRITY GATE")

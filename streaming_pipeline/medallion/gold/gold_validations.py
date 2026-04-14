@@ -1,15 +1,20 @@
 import os
 from pyspark.sql import SparkSession, functions as f
+from delta import configure_spark_with_delta_pip
+import datetime
 
-# 1. ENV SETUP
 os.environ["JAVA_HOME"] = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 
-spark = SparkSession.builder \
+builder = SparkSession.builder \
     .appName("Gold_Streaming_Validation") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .getOrCreate()
+    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0")
+
+spark = configure_spark_with_delta_pip(builder).getOrCreate()
+
+# ... (Keep the rest of your validation logic as it was) ...
 
 # 2. PATHS TO GOLD LOCAL DELTA TABLES
 path_perf = "A:/Crypto-Data-lakehouse-pipeline/data/gold/price_performance"
