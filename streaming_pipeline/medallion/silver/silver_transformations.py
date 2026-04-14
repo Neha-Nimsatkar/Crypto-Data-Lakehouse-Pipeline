@@ -6,61 +6,66 @@ from delta import configure_spark_with_delta_pip
 os.environ["JAVA_HOME"] = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 
-# Create temp folder for Spark to avoid ShutdownHook errors
-temp_path = "A:/Crypto-Data-lakehouse-pipeline/data/spark_temp"
-if not os.path.exists(temp_path):
-    os.makedirs(temp_path)
+# REPLACE THESE WITH YOUR ACTUAL KEYS
+AWS_ACCESS_KEY = "YOUR_ACCESS_KEY"
+AWS_SECRET_KEY = "YOUR_SECRET_KEY"
 
 builder = SparkSession.builder \
     .appName("Crypto_Silver_Streaming") \
     .config("spark.sql.extensions", "io.delta.sql.DeltaSparkSessionExtension") \
     .config("spark.sql.catalog.spark_catalog", "org.apache.spark.sql.delta.catalog.DeltaCatalog") \
-    .config("spark.sql.warehouse.dir", "A:/Crypto-Data-lakehouse-pipeline/spark-warehouse") \
-    .config("spark.local.dir", temp_path) \
-    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0")
+    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4") \
+    .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY) \
+    .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY) \
+    .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com") \
+    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
+    .config("spark.sql.shuffle.partitions", "2")
 
 spark = configure_spark_with_delta_pip(builder).getOrCreate()
 
-# 2. READ STREAM FROM BRONZE
-bronze_path = "A:/Crypto-Data-lakehouse-pipeline/data/bronze/crypto_prices_delta"
+# 2. PATHS (Hybrid: Local Data, S3 Checkpoint)
+base_path = "A:/Crypto-Data-lakehouse-pipeline"
+bronze_path = f"{base_path}/data/bronze/crypto_prices_delta"
+silver_path = f"{base_path}/data/silver/crypto_prices_clean"
+
+# CLOUD PATH
+checkpoint_silver = "s3a://crypto-lakehouse-neha/checkpoints/silver"
+
+# 3. READ STREAM
 df_stream = spark.readStream.format("delta").load(bronze_path)
 
-# 3. TRANSFORMATION (Fixed for your specific Bronze schema)
-# Your Bronze has columns: bitcoin, ethereum, solana, ingestion_metadata
-# We combine them into a clean, normalized format
+# 4. TRANSFORMATION
 coins = ["bitcoin", "ethereum", "solana"]
+current_unix_time = f.unix_timestamp()
+df_with_time = df_stream.withColumn("fallback_time", current_unix_time)
 
-# We use stack to turn columns into rows (Normalization)
-stack_str = ", ".join([f"'{c}', {c}.usd, {c}.usd_market_cap, {c}.usd_24h_vol, {c}.last_updated_at" for c in coins])
+stack_parts = []
+for c in coins:
+    price = f"CAST({c}.usd AS DOUBLE)"
+    m_cap = f"COALESCE(CAST({c}.usd_market_cap AS DOUBLE), 0.0)"
+    vol   = f"COALESCE(CAST({c}.usd_24h_vol AS DOUBLE), 0.0)"
+    updated = f"COALESCE(CAST({c}.last_updated_at AS LONG), fallback_time)"
+    stack_parts.append(f"'{c}', {price}, {m_cap}, {vol}, {updated}")
 
-df_normalized = df_stream.select(
+stack_str = ", ".join(stack_parts)
+df_normalized = df_with_time.select(
     f.expr(f"stack({len(coins)}, {stack_str}) as (coin_id, price_usd, market_cap, volume_24h, updated_at)"),
-    f.col("ingestion_metadata.ingested_at").alias("ingested_at")
+    f.col("ingestion_metadata.ingested_at").alias("ingested_at_str")
 )
 
-# 4. CLEANING & WATERMARKING
 df_cleaned = df_normalized.select(
-    "coin_id",
-    "price_usd",
-    "market_cap",
-    "volume_24h",
+    "coin_id", "price_usd", "market_cap", "volume_24h",
     f.to_timestamp(f.from_unixtime(f.col("updated_at"))).alias("event_timestamp"),
-    "ingested_at"
-).withWatermark("event_timestamp", "10 minutes")
+    f.to_timestamp(f.col("ingested_at_str")).alias("ingested_at")
+).filter(f.col("price_usd").isNotNull()) \
+ .withWatermark("event_timestamp", "10 minutes")
 
-# 5. DEDUPLICATION
-df_deduped = df_cleaned.dropDuplicates(["coin_id", "event_timestamp"])
-
-# 6. WRITE STREAM TO SILVER
-silver_path = "A:/Crypto-Data-lakehouse-pipeline/data/silver/crypto_prices_clean"
-checkpoint_silver = "A:/Crypto-Data-lakehouse-pipeline/data/checkpoint/silver"
-
-query = df_deduped.writeStream \
+# 6. WRITE TO SILVER
+query = df_cleaned.writeStream \
     .format("delta") \
     .outputMode("append") \
     .option("checkpointLocation", checkpoint_silver) \
-    .partitionBy("coin_id") \
     .start(silver_path)
 
-print(f"🚀 Silver Stream Started! Cleaning data into {silver_path}")
+print(f"🚀 Silver Stream Started! Checkpoint in S3, Data in {silver_path}")
 query.awaitTermination()

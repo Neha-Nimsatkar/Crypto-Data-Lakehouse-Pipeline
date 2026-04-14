@@ -1,36 +1,23 @@
 import os
 import sys
-
 from pyspark.sql import SparkSession
+from pyspark.sql.functions import from_json, col
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 
-# 1. Java 11 Path (Already there)
+# 1. Environment Setup
 java_home = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
 os.environ["JAVA_HOME"] = java_home
 os.environ["PATH"] = os.path.join(java_home, "bin") + os.path.pathsep + os.environ["PATH"]
-
-# 2. ADD THIS: Hadoop Home Path
 os.environ["HADOOP_HOME"] = r"C:\hadoop"
 os.environ["PATH"] = os.path.join(r"C:\hadoop", "bin") + os.path.pathsep + os.environ["PATH"]
 
-# ... rest of your code ...
-
-if os.path.exists(java_home):
-    os.environ["JAVA_HOME"] = java_home
-    # This adds the Java bin folder to the start of your PATH for this script only
-    os.environ["PATH"] = os.path.join(java_home, "bin") + os.path.pathsep + os.environ["PATH"]
-    print(f"✅ Java 11 Environment Set: {java_home}")
-else:
-    print(f"❌ ERROR: Path not found: {java_home}")
+if not os.path.exists(java_home):
+    print(f"❌ ERROR: Java Path not found: {java_home}")
     sys.exit(1)
-
-# 2. START SPARK SESSION
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import from_json, col
-from pyspark.sql.types import StructType, StructField, StringType, DoubleType
 
 print("INFO: Initializing Spark Session...")
 
-# Note: Using spark-sql-kafka 0-10 and Delta 2.4.0 (stable with Spark 3.4)
+# 2. START SPARK SESSION
 spark = SparkSession.builder \
     .appName("CryptoStreamingBronze") \
     .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0,io.delta:delta-core_2.12:2.4.0") \
@@ -39,11 +26,19 @@ spark = SparkSession.builder \
     .config("spark.hadoop.hadoop.security.ignore.getSubject.error", "true") \
     .getOrCreate()
 
-# 3. DEFINE THE DATA SCHEMA
+# 3. UPDATED DATA SCHEMA (MUST match the Producer's JSON output)
+# We add market_cap, 24h_vol, and last_updated_at
+coin_info_schema = StructType([
+    StructField("usd", DoubleType()),
+    StructField("usd_market_cap", DoubleType()),
+    StructField("usd_24h_vol", DoubleType()),
+    StructField("last_updated_at", LongType())
+])
+
 schema = StructType([
-    StructField("bitcoin", StructType([StructField("usd", DoubleType())])),
-    StructField("ethereum", StructType([StructField("usd", DoubleType())])),
-    StructField("solana", StructType([StructField("usd", DoubleType())])),
+    StructField("bitcoin", coin_info_schema),
+    StructField("ethereum", coin_info_schema),
+    StructField("solana", coin_info_schema),
     StructField("ingestion_metadata", StructType([
         StructField("source", StringType()),
         StructField("ingested_at", StringType())
@@ -56,7 +51,7 @@ raw_stream_df = spark.readStream \
     .format("kafka") \
     .option("kafka.bootstrap.servers", "localhost:9092") \
     .option("subscribe", "crypto_prices") \
-    .option("startingOffsets", "earliest") \
+    .option("startingOffsets", "latest") \
     .load()
 
 # 5. TRANSFORM DATA
@@ -74,6 +69,7 @@ query = parsed_df.writeStream \
     .format("delta") \
     .outputMode("append") \
     .option("checkpointLocation", checkpoint_path) \
+    .option("mergeSchema", "true") \
     .start(bronze_path)
 
 query.awaitTermination()

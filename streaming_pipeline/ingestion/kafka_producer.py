@@ -3,44 +3,39 @@ import json
 from datetime import datetime
 from confluent_kafka import Producer
 import socket
+import time
 
 # 1. CONFIGURATION
 COINS = "bitcoin,ethereum,solana"
 CURRENCY = "usd"
 BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
 KAFKA_TOPIC = "crypto_prices"
-# Local Docker Kafka address
 KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:9092"
 
-# 2. KAFKA PRODUCER SETUP (Simple Plaintext)
 conf = {
     'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
     'client.id': socket.gethostname()
 }
 
-# Callback function to confirm delivery
 def delivery_report(err, msg):
     if err is not None:
         print(f"❌ Message delivery failed: {err}")
     else:
         print(f"✅ Message delivered to {msg.topic()} [{msg.partition()}]")
 
-import time # Add this at the top with other imports
-
 def run_kafka_producer():
     print("INFO: Initializing Local Kafka Producer...")
     producer = Producer(conf)
-    
     print(f"🚀 Starting Continuous Stream (Press Ctrl+C to stop)...")
     
     try:
         while True:
-            start_time = datetime.now()
-            
             # --- FETCH ---
             params = {
-                'ids': COINS, 'vs_currencies': CURRENCY,
-                'include_market_cap': 'true', 'include_24hr_vol': 'true',
+                'ids': COINS, 
+                'vs_currencies': CURRENCY,
+                'include_market_cap': 'true', 
+                'include_24hr_vol': 'true',
                 'include_last_updated_at': 'true'
             }
             
@@ -49,6 +44,7 @@ def run_kafka_producer():
                 response.raise_for_status()
                 data = response.json()
                 
+                # Add ingestion metadata
                 data['ingestion_metadata'] = {
                     "source": "CoinGecko API",
                     "ingested_at": datetime.now().isoformat()
@@ -58,6 +54,7 @@ def run_kafka_producer():
                 json_payload = json.dumps(data)
                 producer.produce(
                     KAFKA_TOPIC, 
+                    key="crypto_update", # Added a key for better partitioning
                     value=json_payload, 
                     callback=delivery_report
                 )
@@ -68,7 +65,6 @@ def run_kafka_producer():
             except Exception as e:
                 print(f"⚠️ Fetch Error: {e}")
 
-            # Wait for 60 seconds before the next update
             time.sleep(60) 
 
     except KeyboardInterrupt:
