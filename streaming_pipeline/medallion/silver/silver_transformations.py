@@ -2,9 +2,6 @@ import os
 from pyspark.sql import SparkSession, functions as f
 from delta import configure_spark_with_delta_pip
 
-# 1. ENV SETUP
-os.environ["JAVA_HOME"] = r"C:\Program Files\Amazon Corretto\jdk11.0.30_7"
-os.environ["HADOOP_HOME"] = r"C:\hadoop"
 
 # ✅ KEY FIX: Force JAR resolution BEFORE SparkSession initializes
 os.environ["PYSPARK_SUBMIT_ARGS"] = (

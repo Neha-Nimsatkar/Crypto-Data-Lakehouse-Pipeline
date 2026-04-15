@@ -1,0 +1,10 @@
+FROM quay.io/astronomer/astro-runtime:11.3.0
+
+USER root
+# This line replaces the broken link with a global mirror before running update
+RUN sed -i 's/deb.debian.org/ftp.us.debian.org/g' /etc/apt/sources.list && \
+    apt-get update --fix-missing && \
+    apt-get install -y openjdk-11-jdk && \
+    apt-get clean
+
+USER astro
