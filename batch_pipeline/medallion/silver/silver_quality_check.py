@@ -1,66 +1,113 @@
-from pyspark.sql import functions as f
-import datetime
+"""
+File        : bronze_validation.py
+Location    : batch_pipeline/medallion/bronze/
+Description : Performs comprehensive quality and integrity checks on raw Bronze
+              layer data ingested from CoinGecko API into AWS S3.
+              Acts as a quality gate before data moves to the Silver layer.
 
-# 1. Load Raw Bronze Data (Using multiLine for pretty-printed JSON)
-bronze_path = "s3://crypto-lakehouse-neha/bronze/*.json"
-df_bronze = spark.read.option("multiLine", "true").json(bronze_path)
+Input       : s3://crypto-lakehouse-neha/bronze/*.json
+Output      : Console validation report (pass/fail per check)
 
-print(" --- BRONZE LAYER: COMPREHENSIVE SECURITY & QUALITY GATE ---")
+Checks Performed:
+    1. System-level JSON integrity (corrupt record detection)
+    2. Schema contract validation (expected keys present)
+    3. Data completeness (NULL price detection per coin)
+    4. Metadata and lineage validation
+    5. Data freshness (latest ingestion timestamp)
 
-# --- CHECK 1: System Level Integrity ---
-total_raw = df_bronze.count()
-print(f" Total Records in Bronze: {total_raw}")
+Dependencies:
+    - pyspark
+    - AWS S3 access configured
 
-if "_corrupt_record" in df_bronze.columns:
-    corrupt_count = df_bronze.filter(f.col("_corrupt_record").isNotNull()).count()
-    print(f" CRITICAL: Corrupt JSON Records Found: {corrupt_count}")
-else:
-    print(" JSON Structure: Valid (No corruption detected)")
+Warning:
+    Requires active SparkSession. Run inside Databricks or
+    an environment with PySpark and S3 access configured.
+"""
 
-# --- CHECK 2: Schema Contract (The 'Key' Check) ---
-expected_keys = ["bitcoin", "ethereum", "solana", "ingestion_metadata"]
+
+
+from pyspark.sql import functions as F
+
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+BRONZE_PATH    = "s3://crypto-lakehouse-neha/bronze/*.json"
+EXPECTED_COINS = ["bitcoin", "ethereum", "solana"]
+EXPECTED_KEYS  = EXPECTED_COINS + ["ingestion_metadata"]
+
+
+# ── Load Bronze Data ──────────────────────────────────────────────────────────
+df_bronze   = spark.read.option("multiLine", "true").json(BRONZE_PATH)
 actual_keys = df_bronze.columns
 
-missing_keys = [c for c in expected_keys if c not in actual_keys]
-# EXTRA CHECK: Unexpected Columns (Catches if API adds new data we aren't handling)
-extra_keys = [c for c in actual_keys if c not in expected_keys and c != "_corrupt_record"]
+print("─" * 60)
+print("  BRONZE LAYER: COMPREHENSIVE QUALITY GATE")
+print("─" * 60)
+
+
+# ── Check 1: System-Level JSON Integrity ──────────────────────────────────────
+total_raw = df_bronze.count()
+print(f"\n[CHECK 1] System Integrity")
+print(f"  Total records in Bronze : {total_raw}")
+
+if "_corrupt_record" in actual_keys:
+    corrupt_count = df_bronze.filter(F.col("_corrupt_record").isNotNull()).count()
+    print(f"  CRITICAL : Corrupt JSON records found: {corrupt_count}")
+else:
+    print("  PASS     : No corrupt JSON records detected")
+
+
+# ── Check 2: Schema Contract ──────────────────────────────────────────────────
+print(f"\n[CHECK 2] Schema Contract")
+
+missing_keys = [c for c in EXPECTED_KEYS if c not in actual_keys]
+extra_keys   = [c for c in actual_keys if c not in EXPECTED_KEYS and c != "_corrupt_record"]
 
 if missing_keys:
-    print(f" SCHEMA DRIFT: Missing required keys: {missing_keys}")
+    print(f"  FAIL     : Missing required keys: {missing_keys}")
 else:
-    print(" Schema Contract: Verified (All coin keys present)")
+    print("  PASS     : All expected keys present")
 
 if extra_keys:
-    print(f" SCHEMA ALERT: New/Unexpected keys found in JSON: {extra_keys}")
+    print(f"  ALERT    : Unexpected new keys found (API change?): {extra_keys}")
 
-# --- CHECK 3: Data Completeness (Internal Field Check) ---
-# We check if the 'usd' price exists inside every coin object
-for coin in ["bitcoin", "ethereum", "solana"]:
+
+# ── Check 3: Data Completeness ────────────────────────────────────────────────
+print(f"\n[CHECK 3] Data Completeness")
+
+for coin in EXPECTED_COINS:
     if coin in actual_keys:
-        null_price = df_bronze.filter(f.col(f"{coin}.usd").isNull()).count()
+        null_price = df_bronze.filter(F.col(f"{coin}.usd").isNull()).count()
         if null_price > 0:
-            print(f" DATA GAP: {coin} has {null_price} records with NULL prices.")
+            print(f"  FAIL     : {coin.capitalize()} has {null_price} record(s) with NULL price")
         else:
-            print(f" {coin.capitalize()} Data: 100% Complete")
+            print(f"  PASS     : {coin.capitalize()} — 100% complete")
 
-# --- CHECK 4: Metadata & Lineage Check ---
+
+# ── Check 4: Metadata & Lineage ───────────────────────────────────────────────
+print(f"\n[CHECK 4] Metadata & Lineage")
+
 invalid_meta = df_bronze.filter(
-    (f.col("ingestion_metadata.ingested_at").isNull()) | 
-    (f.col("ingestion_metadata.ingested_at") == "")
+    F.col("ingestion_metadata.ingested_at").isNull() |
+    (F.col("ingestion_metadata.ingested_at") == "")
 ).count()
 
 if invalid_meta > 0:
-    print(f" LINEAGE ERROR: {invalid_meta} records missing ingestion timestamps!")
+    print(f"  FAIL     : {invalid_meta} record(s) missing ingestion timestamp")
 else:
-    print(" Metadata Lineage: Valid")
+    print("  PASS     : Metadata lineage valid")
 
-# --- EXTRA CHECK 5: Data Freshness (Pre-Check) ---
-# Helps identify if you are accidentally processing old files from weeks ago
-# Extract the year from the ingestion string to ensure it's current
+
+# ── Check 5: Data Freshness ───────────────────────────────────────────────────
+print(f"\n[CHECK 5] Data Freshness")
+
 try:
-    latest_ingestion = df_bronze.select(f.max("ingestion_metadata.ingested_at")).collect()[0][0]
-    print(f" Latest Ingestion Timestamp in Batch: {latest_ingestion}")
-except:
-    print(" Could not calculate latest ingestion timestamp.")
+    latest_ingestion = df_bronze.select(
+        F.max("ingestion_metadata.ingested_at")
+    ).collect()[0][0]
+    print(f"  INFO     : Latest ingestion timestamp: {latest_ingestion}")
+except Exception as e:
+    print(f"  WARNING  : Could not retrieve latest ingestion timestamp: {e}")
 
-print("----------------------------------------------------------")
+print("\n" + "─" * 60)
+print("  BRONZE QUALITY GATE COMPLETE")
+print("─" * 60)
