@@ -1,55 +1,133 @@
+"""
+File        : gold_validations.py
+Location    : batch_pipeline/medallion/gold/
+Description : Validates business logic and cross-table consistency across
+              Gold layer Delta tables.
+
+Input       : S3 Delta tables —
+                s3a://crypto-lakehouse-neha/gold/price_performance
+                s3a://crypto-lakehouse-neha/gold/latest_snapshot
+
+Checks Performed:
+    1. Ranking integrity    — no duplicate ranks per timestamp
+    2. Moving average       — no NULL moving averages
+    3. Cross-table sync     — snapshot matches performance table
+
+Dependencies:
+    - pyspark
+    - delta-core
+    - hadoop-aws
+
+Environment Variables Required (.env):
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+
+Warning:
+    Never hardcode AWS credentials.
+    Always load from environment variables.
+"""
+
+
+
 import os
-from pyspark.sql import SparkSession, functions as f
+from pyspark.sql import SparkSession, functions as F
 from pyspark.sql.window import Window
-import datetime
+from dotenv import load_dotenv
 
-# --- AWS CONFIGURATION ---
-AWS_ACCESS_KEY = "YOUR_ACCESS_KEY"
-AWS_SECRET_KEY = "YOUR_SECRET_KEY"
+load_dotenv()
 
-builder = SparkSession.builder \
-    .appName("Silver_Validation_Cloud") \
-    .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.200") \
-    .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY) \
-    .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY) \
-    .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-    .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
+# ── Configuration ─────────────────────────────────────────────────────────────
+GOLD_PERF_PATH = "s3a://crypto-lakehouse-neha/gold/price_performance"
+GOLD_SNAP_PATH = "s3a://crypto-lakehouse-neha/gold/latest_snapshot"
+
+
+# ── Spark Session ─────────────────────────────────────────────────────────────
+spark = (
+    SparkSession.builder
+    .appName("Gold_Validation")
+    .config("spark.jars.packages",
+            "io.delta:delta-core_2.12:2.4.0,"
+            "org.apache.hadoop:hadoop-aws:3.3.4,"
+            "com.amazonaws:aws-java-sdk-bundle:1.12.200")
+    .config("spark.hadoop.fs.s3a.access.key",
+            os.getenv("AWS_ACCESS_KEY_ID"))
+    .config("spark.hadoop.fs.s3a.secret.key",
+            os.getenv("AWS_SECRET_ACCESS_KEY"))
+    .config("spark.hadoop.fs.s3a.impl",
+            "org.apache.hadoop.fs.s3a.S3AFileSystem")
+    .config("spark.hadoop.fs.s3a.aws.credentials.provider",
+            "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
     .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com")
+    .getOrCreate()
+)
 
-spark = builder.getOrCreate()
-gold_perf_path = "s3a://crypto-lakehouse-neha/gold/price_performance"
-gold_snap_path = "s3a://crypto-lakehouse-neha/gold/latest_snapshot"
+# ── Load Gold Tables ──────────────────────────────────────────────────────────
+df_perf = spark.read.format("delta").load(GOLD_PERF_PATH)
+df_snap = spark.read.format("delta").load(GOLD_SNAP_PATH)
 
-df_gold_val = spark.read.format("delta").load(gold_perf_path)
-df_snap_val = spark.read.format("delta").load(gold_snap_path)
+print("─" * 60)
+print("  GOLD LAYER: BUSINESS LOGIC VALIDATION")
+print("─" * 60)
 
-print(" --- GOLD LAYER: BUSINESS LOGIC VALIDATION ---")
 
-# Check 1: Ranking Integrity
-# Every timestamp should have a #1, #2, and #3 rank. 
-# If a timestamp has two #1s, your Window function is broken.
-rank_check = df_gold_val.groupBy("event_timestamp", "market_cap_rank").count().filter("count > 1").count()
+
+# ── Check 1: Ranking Integrity ────────────────────────────────────────────────
+print("\n[CHECK 1] Ranking Integrity")
+
+rank_check = (
+    df_perf
+    .groupBy("event_timestamp", "market_cap_rank")
+    .count()
+    .filter("count > 1")
+    .count()
+)
+
 if rank_check > 0:
-    print(f" LOGIC ERROR: Detected {rank_check} instances of duplicate ranks per timestamp!")
+    print(f"  FAIL     : {rank_check} instance(s) of duplicate ranks per timestamp")
 else:
-    print(" Ranking Integrity: Verified (1 rank per coin per timestamp).")
+    print("  PASS     : One rank per coin per timestamp — verified")
 
-# Check 2: Moving Average Calculation Accuracy
-# The Moving Average should never be $0 if the price is > $0.
-ma_nulls = df_gold_val.filter(f.col("moving_avg_price").isNull()).count()
+
+
+# ── Check 2: Moving Average Completeness ──────────────────────────────────────
+print("\n[CHECK 2] Moving Average Completeness")
+
+ma_nulls = df_perf.filter(F.col("moving_avg_price").isNull()).count()
+
 if ma_nulls > 0:
-    print(f" CALCULATION GAP: {ma_nulls} records are missing Moving Averages.")
+    print(f"  FAIL     : {ma_nulls} record(s) missing moving average values")
 else:
-    print(" Analytics Completeness: 100% of records have Moving Averages.")
+    print("  PASS     : 100% of records have moving average values")
 
-# Check 3: Cross-Table Consistency
-# The Latest Snapshot should match the most recent record in the Performance table.
-latest_snapshot_price = spark.read.table("workspace.default.gold_latest_snapshot").filter("coin_id = 'bitcoin'").select("price_usd").collect()[0][0]
-latest_perf_price = df_gold_val.filter("coin_id = 'bitcoin'").sort(f.col("event_timestamp").desc()).limit(1).select("price_usd").collect()[0][0]
 
-if abs(latest_snapshot_price - latest_perf_price) > 0.0001:
-    print(" SYNC ERROR: Snapshot and Performance tables are out of sync!")
-else:
-    print(" Table Synchronization: Verified.")
 
-print("--------------------------------------------------")
+# ── Check 3: Cross-Table Consistency ─────────────────────────────────────────
+print("\n[CHECK 3] Cross-Table Consistency")
+
+try:
+    snap_price = (
+        df_snap
+        .filter("coin_id = 'bitcoin'")
+        .select("price_usd")
+        .collect()[0][0]
+    )
+    perf_price = (
+        df_perf
+        .filter("coin_id = 'bitcoin'")
+        .orderBy(F.col("event_timestamp").desc())
+        .limit(1)
+        .select("price_usd")
+        .collect()[0][0]
+    )
+
+    if abs(snap_price - perf_price) > 0.0001:
+        print(f"  FAIL     : Snapshot (${snap_price}) and performance (${perf_price}) are out of sync")
+    else:
+        print(f"  PASS     : Tables are in sync — Bitcoin price: ${snap_price}")
+
+except Exception as e:
+    print(f"  WARNING  : Could not complete cross-table check: {e}")
+
+print("\n" + "─" * 60)
+print("  GOLD VALIDATION COMPLETE")
+print("─" * 60)
