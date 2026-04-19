@@ -1,4 +1,4 @@
-pandas
-pyspark==3.4.0
-delta-spark==2.4.0
-boto3
+kafka-python==2.0.2
+pandas==2.1.0
+pyspark==3.5.0
+delta-spark==3.0.0
