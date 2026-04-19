@@ -1,6 +1,48 @@
-
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+
+# Environment
+.env
+.venv
+venv/
+
+# Logs
 logs/
 *.log
-.env
+
+# Data files - Delta Lake output
+data/
+*.parquet
+*.snappy.parquet
+*.crc
+_delta_log/
+
+# Checkpoints - Spark/Kafka generated
+checkpoints/
+
+# Airflow
+airflow.db
+airflow.cfg
+airflow-webserver.pid
+webserver_config.py
+
+# Astro
+astro
+
+# OS files
+.DS_Store
+Thumbs.db
+New Volume*.lnk
+*.lnk
+
+# IDE
+.vscode/
+.idea/
+
+# Java
+*.class
+*.jar
