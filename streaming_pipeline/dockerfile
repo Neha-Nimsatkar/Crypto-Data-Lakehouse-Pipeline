@@ -1,14 +1,3 @@
-# File     : Dockerfile
-# Location : streaming_pipeline/
-# Purpose  : Builds the Astro Runtime image with Java 11 installed.
-#            Java is required by PySpark and Delta Lake.
-#
-# Base     : Astronomer Astro Runtime 11.3.0
-# Java     : OpenJDK 11 (via Debian apt — Indian mirror for faster builds)
-#
-# Warning  : Do not change USER back to root after the final USER astro line.
-#            Astro Runtime expects the container to run as the astro user.
-
 FROM quay.io/astronomer/astro-runtime:11.3.0
 
 USER root

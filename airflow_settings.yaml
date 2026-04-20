@@ -1,6 +1,3 @@
-# Warning  : Never commit real credentials here.
-#            This file is for local dev only.
-
 airflow:
   connections:
     - conn_id: databricks_default

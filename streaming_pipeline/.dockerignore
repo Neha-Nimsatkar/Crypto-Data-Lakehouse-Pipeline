@@ -1,7 +1,3 @@
-# streaming_pipeline/.dockerignore
-# Files excluded from the Docker build context.
-# Keeps the image lean and prevents secrets leaking into the image.
-
 astro
 .git
 .env

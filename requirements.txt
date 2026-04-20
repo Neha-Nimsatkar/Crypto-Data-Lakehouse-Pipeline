@@ -1,11 +1,3 @@
-# requirements.txt
-# Location : Crypto-Data-lakehouse-pipeline/ (root)
-# Purpose  : Python dependencies for the batch pipeline.
-#
-# Warning  : pyspark 3.5.0 requires delta-spark 3.0.0 — do not mix versions.
-#            These run on Databricks so versions must match the Databricks
-#            runtime cluster configuration.
-
 kafka-python==2.0.2
 pandas==2.1.0
 pyspark==3.5.0
