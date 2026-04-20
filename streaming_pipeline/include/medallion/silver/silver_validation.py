@@ -1,77 +1,170 @@
+"""
+File        : silver_validation.py
+Location    : streaming_pipeline/include/medallion/silver/
+Description : Validates the streaming Silver Delta table on S3 after transformation
+              from the Bronze layer. Performs integrity, freshness, volume,
+              and anomaly checks before data is promoted to Gold.
+
+Input       : S3 Delta table — s3a://crypto-lakehouse-neha/silver/crypto_prices_clean
+
+Checks Performed:
+    1. Integrity        — duplicate records and NULL price detection
+    2. Coin coverage    — all three coins present in Silver
+    3. Freshness        — age of latest record in minutes
+    4. Volume           — row count per coin
+    5. Anomaly          — impossible Bitcoin price range detection
+
+Dependencies:
+    - pyspark==3.4.0
+    - delta-spark==2.4.0
+    - hadoop-aws==3.3.4
+
+Environment Variables Required (.env):
+    - AWS_ACCESS_KEY_ID
+    - AWS_SECRET_ACCESS_KEY
+    - S3_BUCKET          (default: s3a://crypto-lakehouse-neha)
+
+Warning:
+    Never hardcode AWS credentials. Always load from environment variables.
+    Ensure system timezone matches data timezone for accurate freshness checks.
+"""
+
+
 import os
 import datetime
-from pyspark.sql import SparkSession, functions as f
-from pyspark.sql.window import Window
+from pyspark.sql import SparkSession, functions as F
+from dotenv import load_dotenv
 
-# --- AWS CONFIGURATION ---
-# WARNING: Do not share scripts with hardcoded credentials!
-AWS_ACCESS_KEY = "AKIAWYKG6KACJLEYZI65"
-AWS_SECRET_KEY = "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"
+load_dotenv()
+
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+S3_BUCKET             = os.getenv("S3_BUCKET", "s3a://crypto-lakehouse-neha")
+
+SILVER_PATH           = f"{S3_BUCKET}/silver/crypto_prices_clean"
+BITCOIN_PRICE_MIN     = 20_000
+BITCOIN_PRICE_MAX     = 200_000
+
+
+# ── Spark Session ─────────────────────────────────────────────────────────────
+print("INFO  : Initializing Spark session...")
 
 try:
-    builder = SparkSession.builder \
-        .appName("Silver_Validation_Cloud") \
-        .config("spark.jars.packages", "io.delta:delta-core_2.12:2.4.0,org.apache.hadoop:hadoop-aws:3.3.4,com.amazonaws:aws-java-sdk-bundle:1.12.200") \
-        .config("spark.hadoop.fs.s3a.access.key", AWS_ACCESS_KEY) \
-        .config("spark.hadoop.fs.s3a.secret.key", AWS_SECRET_KEY) \
-        .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem") \
-        .config("spark.hadoop.fs.s3a.aws.credentials.provider", "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider") \
+    spark = (
+        SparkSession.builder
+        .appName("Silver_Validation_Streaming")
+        .config("spark.jars.packages",
+                "io.delta:delta-core_2.12:2.4.0,"
+                "org.apache.hadoop:hadoop-aws:3.3.4,"
+                "com.amazonaws:aws-java-sdk-bundle:1.12.200")
+        .config("spark.hadoop.fs.s3a.access.key",
+                AWS_ACCESS_KEY_ID)
+        .config("spark.hadoop.fs.s3a.secret.key",
+                AWS_SECRET_ACCESS_KEY)
+        .config("spark.hadoop.fs.s3a.impl",
+                "org.apache.hadoop.fs.s3a.S3AFileSystem")
+        .config("spark.hadoop.fs.s3a.aws.credentials.provider",
+                "org.apache.hadoop.fs.s3a.SimpleAWSCredentialsProvider")
         .config("spark.hadoop.fs.s3a.endpoint", "s3.amazonaws.com")
-    
-    spark = builder.getOrCreate()
+        .getOrCreate()
+    )
+    spark.sparkContext.setLogLevel("WARN")
 
-    # --- PATH CONFIGURATION ---
-    silver_path = "s3a://crypto-lakehouse-neha/data/silver/crypto_prices_clean"
-    df_check = spark.read.format("delta").load(silver_path)
 
-    print("\n" + "="*50)
-    print("🔍 SILVER LAYER: FINAL STREAMING VALIDATION")
-    print("="*50)
+    # ── Load Silver Table ─────────────────────────────────────────────────────
+    print(f"INFO  : Loading Silver table from: {SILVER_PATH}")
+    df_check = spark.read.format("delta").load(SILVER_PATH)
 
-    # --- 1. INTEGRITY CHECKS ---
-    duplicate_count = df_check.groupBy("coin_id", "event_timestamp") \
-        .count() \
-        .filter("count > 1") \
+    print("─" * 60)
+    print("  SILVER LAYER: STREAMING VALIDATION")
+    print("─" * 60)
+
+
+    # ── Check 1: Integrity ────────────────────────────────────────────────────
+    print("\n[CHECK 1] Integrity")
+
+    duplicate_count = (
+        df_check
+        .groupBy("coin_id", "event_timestamp")
         .count()
-    print(f"✅ Duplicate Records (expected 0): {duplicate_count}")
+        .filter("count > 1")
+        .count()
+    )
+    null_prices = df_check.filter(F.col("price_usd").isNull()).count()
 
-    null_prices = df_check.filter(f.col("price_usd").isNull()).count()
-    print(f"✅ Records with Null Prices (expected 0): {null_prices}")
+    print(f"  {'PASS' if duplicate_count == 0 else 'FAIL'}     : Duplicate records  : {duplicate_count}")
+    print(f"  {'PASS' if null_prices == 0 else 'FAIL'}     : NULL price records : {null_prices}")
 
-    # --- 2. STORAGE & PARTITIONING ---
-    distinct_coins = df_check.select("coin_id").distinct().collect()
-    coins_found = [row['coin_id'] for row in distinct_coins]
-    print(f"✅ Coins trackable in Silver: {coins_found}")
 
-    # --- 3. FRESHNESS CHECK ---
-    latest_row = df_check.select(f.max("event_timestamp")).collect()[0][0]
+    # ── Check 2: Coin Coverage ────────────────────────────────────────────────
+    print("\n[CHECK 2] Coin Coverage")
+
+    coins_found = [
+        row["coin_id"]
+        for row in df_check.select("coin_id").distinct().collect()
+    ]
+    expected    = {"bitcoin", "ethereum", "solana"}
+    missing     = expected - set(coins_found)
+
+    print(f"  INFO     : Coins found  : {sorted(coins_found)}")
+    if missing:
+        print(f"  FAIL     : Missing coins : {sorted(missing)}")
+    else:
+        print(f"  PASS     : All 3 coins present")
+
+
+    # ── Check 3: Freshness ────────────────────────────────────────────────────
+    print("\n[CHECK 3] Freshness")
+
+    latest_row = df_check.select(F.max("event_timestamp")).collect()[0][0]
     if latest_row:
-        # Note: Ensure timezone consistency between system and data
-        delay_mins = (datetime.datetime.now() - latest_row).total_seconds() / 60
-        print(f"✅ Freshness Check: Data is {round(delay_mins, 2)} minutes old.")
+        delay_mins = (
+            datetime.datetime.now() - latest_row.replace(tzinfo=None)
+        ).total_seconds() / 60
+        status = "PASS" if delay_mins < 30 else "ALERT"
+        print(f"  {status}     : Data is {round(delay_mins, 2)} minutes old")
     else:
-        print("⚠️ Freshness Check: No data found in Silver yet.")
+        print("  WARNING  : No data found in Silver table yet")
 
-    # --- 4. VOLUME CHECK ---
-    print("\n📊 Volume Check (Rows per Coin):")
-    df_check.groupBy("coin_id").count().show()
 
-    # --- 5. ANOMALY DETECTION ---
+    # ── Check 4: Volume ───────────────────────────────────────────────────────
+    print("\n[CHECK 4] Volume")
+
+    coin_counts = (
+        df_check.groupBy("coin_id")
+        .count()
+        .orderBy("coin_id")
+        .collect()
+    )
+    for row in coin_counts:
+        print(f"  INFO     : {row['coin_id']:<12} — {row['count']} rows")
+
+
+    # ── Check 5: Anomaly Detection ────────────────────────────────────────────
+    print("\n[CHECK 5] Anomaly Detection")
+
     outliers = df_check.filter(
-        (f.col("coin_id") == "bitcoin") &
-        ((f.col("price_usd") < 20000) | (f.col("price_usd") > 200000))
+        (F.col("coin_id") == "bitcoin") &
+        ((F.col("price_usd") < BITCOIN_PRICE_MIN) |
+         (F.col("price_usd") > BITCOIN_PRICE_MAX))
     ).count()
-    
+
     if outliers > 0:
-        print(f"❌ ANOMALY: Detected {outliers} suspicious price points for Bitcoin!")
+        print(f"  FAIL     : {outliers} suspicious Bitcoin price point(s) detected")
     else:
-        print("✅ Reasonability Check: Bitcoin price range is valid.")
+        print(f"  PASS     : Bitcoin price range valid ({BITCOIN_PRICE_MIN:,} – {BITCOIN_PRICE_MAX:,})")
 
-    # --- 6. SAMPLE VIEW ---
-    print("\n👀 Latest 5 Records in Silver:")
-    df_check.orderBy(f.col("event_timestamp").desc()).show(5)
 
-    print("="*50 + "\n")
+    # ── Sample Preview ────────────────────────────────────────────────────────
+    print("\n[PREVIEW] Latest 5 records")
+    df_check.orderBy(F.col("event_timestamp").desc()).show(5, truncate=False)
+
+    print("\n" + "─" * 60)
+    print("  SILVER VALIDATION COMPLETE")
+    print("─" * 60)
 
 except Exception as e:
-    print(f"❌ ERROR loading Silver data from S3: {e}")
+    print(f"ERROR : Failed to load Silver data from S3: {e}")
+    raise
