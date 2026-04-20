@@ -1,8 +1,17 @@
+# streaming_pipeline/.dockerignore
+# Files excluded from the Docker build context.
+# Keeps the image lean and prevents secrets leaking into the image.
+
 astro
 .git
 .env
 airflow_settings.yaml
 logs/
 .venv
+venv/
 airflow.db
 airflow.cfg
+__pycache__/
+*.pyc
+data/
+checkpoints/

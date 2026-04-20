@@ -1,11 +1,32 @@
-.git
+# streaming_pipeline/.gitignore
+
+# Secrets
 .env
-.DS_Store
-airflow_settings.yaml
+
+# Python
 __pycache__/
-astro
+*.pyc
+*.pyo
 .venv
+venv/
+
+# Airflow runtime files
 airflow-webserver.pid
 webserver_config.py
 airflow.cfg
 airflow.db
+
+# Astro
+astro
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data and checkpoints
+data/
+checkpoints/
+logs/
+
+# Airflow local config
+airflow_settings.yaml

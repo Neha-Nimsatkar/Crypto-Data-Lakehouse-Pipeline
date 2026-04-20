@@ -1,12 +1,14 @@
-FROM apache/airflow:2.7.1
+
 FROM apache/airflow:2.7.1
 
 USER root
-RUN apt-get update && apt-get install -y build-essential
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends build-essential && \
+    apt-get clean
 
 USER airflow
-# We explicitly upgrade openlineage to bypass the error 
 RUN pip install --no-cache-dir \
     "apache-airflow-providers-openlineage>=1.8.0" \
     "apache-airflow-providers-databricks" \
-    "boto3"
+    "boto3" \
+    "python-dotenv"
