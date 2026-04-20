@@ -2,13 +2,12 @@ FROM quay.io/astronomer/astro-runtime:11.3.0
 
 USER root
 
-# 1. Change to the Indian Mirror for much faster speeds
-# 2. Add a 'retry' flag to the install command
 RUN sed -i 's/deb.debian.org/ftp.in.debian.org/g' /etc/apt/sources.list && \
     apt-get update --fix-missing && \
     apt-get install -y --no-install-recommends openjdk-11-jdk && \
     apt-get clean
-# Add this after the apt-get block:
+
+    
 ENV JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
 ENV PATH=$JAVA_HOME/bin:$PATH
 
