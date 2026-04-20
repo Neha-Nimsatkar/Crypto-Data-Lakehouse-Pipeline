@@ -1,4 +1,3 @@
-# Crypto-Data-Lakehouse-Pipeline
 # Crypto Data Lakehouse Pipeline
 
 A end-to-end data engineering project that ingests real-time cryptocurrency market data for **Bitcoin, Ethereum, and Solana** through two parallel pipelines — batch and streaming — and stores it in a Medallion Architecture (Bronze → Silver → Gold) using Delta Lake, Apache Kafka, Apache Spark, Databricks, and AWS S3.
