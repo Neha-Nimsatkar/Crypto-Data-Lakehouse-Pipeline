@@ -1,74 +1,128 @@
-import requests
+"""
+File        : kafka_producer.py
+Location    : streaming_pipeline/ingestion/
+Description : Continuously fetches real-time cryptocurrency prices from the
+              CoinGecko API and publishes them as JSON messages to a Kafka topic.
+              Runs as a long-lived process, producing one message every 60 seconds.
+
+Output      : Kafka topic — crypto_prices
+
+Message Format:
+    {
+        "bitcoin":  { "usd": float, "usd_market_cap": float, "usd_24h_vol": float },
+        "ethereum": { "usd": float, ... },
+        "solana":   { "usd": float, ... },
+        "ingestion_metadata": { "source": str, "ingested_at": str }
+    }
+
+Dependencies:
+    - requests
+    - confluent-kafka
+
+Environment Variables Required (.env):
+    - KAFKA_BROKER   (default: 127.0.0.1:9092)
+    - KAFKA_TOPIC    (default: crypto_prices)
+
+Usage:
+    python kafka_producer.py
+    Press Ctrl+C to stop.
+
+Warning:
+    Requires a running Kafka broker on KAFKA_BROKER before starting.
+"""
+
+
+import os
 import json
-from datetime import datetime
-from confluent_kafka import Producer
 import socket
 import time
+import requests
+from datetime import datetime
+from confluent_kafka import Producer
+from dotenv import load_dotenv
 
-# 1. CONFIGURATION
-COINS = "bitcoin,ethereum,solana"
-CURRENCY = "usd"
-BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
-KAFKA_TOPIC = "crypto_prices"
-KAFKA_BOOTSTRAP_SERVERS = "127.0.0.1:9092"
+load_dotenv()
 
+
+# ── Configuration ─────────────────────────────────────────────────────────────
+COINS             = "bitcoin,ethereum,solana"
+CURRENCY          = "usd"
+BASE_URL          = "https://api.coingecko.com/api/v3/simple/price"
+KAFKA_TOPIC       = os.getenv("KAFKA_TOPIC", "crypto_prices")
+KAFKA_BROKER      = os.getenv("KAFKA_BROKER", "127.0.0.1:9092")
+POLL_INTERVAL_SEC = 60
+
+
+# ── Kafka Producer Config ─────────────────────────────────────────────────────
 conf = {
-    'bootstrap.servers': KAFKA_BOOTSTRAP_SERVERS,
-    'client.id': socket.gethostname()
+    "bootstrap.servers": KAFKA_BROKER,
+    "client.id"        : socket.gethostname(),
 }
 
+
+# ── Delivery Callback ─────────────────────────────────────────────────────────
 def delivery_report(err, msg):
     if err is not None:
-        print(f"❌ Message delivery failed: {err}")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] DELIVERY FAILED : {err}")
     else:
-        print(f"✅ Message delivered to {msg.topic()} [{msg.partition()}]")
+        print(f"[{datetime.now().strftime('%H:%M:%S')}] DELIVERED       : topic={msg.topic()} partition=[{msg.partition()}]")
 
+
+# ── Producer ──────────────────────────────────────────────────────────────────
 def run_kafka_producer():
-    print("INFO: Initializing Local Kafka Producer...")
+    print(f"INFO  : Initializing Kafka producer")
+    print(f"INFO  : Broker = {KAFKA_BROKER} | Topic = {KAFKA_TOPIC}")
+    print(f"INFO  : Poll interval = {POLL_INTERVAL_SEC}s | Press Ctrl+C to stop")
+    print("─" * 60)
+
     producer = Producer(conf)
-    print(f"🚀 Starting Continuous Stream (Press Ctrl+C to stop)...")
-    
+
+    params = {
+        "ids"                    : COINS,
+        "vs_currencies"          : CURRENCY,
+        "include_market_cap"     : "true",
+        "include_24hr_vol"       : "true",
+        "include_last_updated_at": "true",
+    }
+
     try:
         while True:
-            # --- FETCH ---
-            params = {
-                'ids': COINS, 
-                'vs_currencies': CURRENCY,
-                'include_market_cap': 'true', 
-                'include_24hr_vol': 'true',
-                'include_last_updated_at': 'true'
-            }
-            
             try:
-                response = requests.get(BASE_URL, params=params)
+                response = requests.get(BASE_URL, params=params, timeout=30)
                 response.raise_for_status()
                 data = response.json()
-                
-                # Add ingestion metadata
-                data['ingestion_metadata'] = {
-                    "source": "CoinGecko API",
-                    "ingested_at": datetime.now().isoformat()
+
+                data["ingestion_metadata"] = {
+                    "source"      : "CoinGecko API",
+                    "ingested_at" : datetime.now().isoformat(),
+                    "coins"       : COINS,
                 }
 
-                # --- PRODUCE ---
-                json_payload = json.dumps(data)
                 producer.produce(
-                    KAFKA_TOPIC, 
-                    key="crypto_update", # Added a key for better partitioning
-                    value=json_payload, 
-                    callback=delivery_report
+                    topic    = KAFKA_TOPIC,
+                    key      = "crypto_update",
+                    value    = json.dumps(data),
+                    callback = delivery_report,
                 )
                 producer.flush()
-                
-                print(f"📡 Data sent at {datetime.now().strftime('%H:%M:%S')}")
-                
-            except Exception as e:
-                print(f"⚠️ Fetch Error: {e}")
 
-            time.sleep(60) 
+            except requests.exceptions.Timeout:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING : API request timed out, retrying next cycle")
+            except requests.exceptions.ConnectionError:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING : Could not reach CoinGecko API, retrying next cycle")
+            except requests.exceptions.HTTPError as e:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] WARNING : HTTP error — {e}")
+            except Exception as e:
+                print(f"[{datetime.now().strftime('%H:%M:%S')}] ERROR   : Unexpected error — {e}")
+
+            time.sleep(POLL_INTERVAL_SEC)
 
     except KeyboardInterrupt:
-        print("\n🛑 Producer stopped by user.")
+        print("\n" + "─" * 60)
+        print("INFO  : Producer stopped by user")
+        print("─" * 60)
 
+
+# ── Entry Point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     run_kafka_producer()
