@@ -12,13 +12,15 @@ jobs:
       - name: Checkout GitHub Repository
         uses: actions/checkout@v4
 
-      - name: Setup Databricks CLI
-        uses: databricks/setup-cli@v0.2.1
+      # Tumhari working curl command wapas le aaye
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
       - name: Sync Files to Workspace
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          # Dynamic github.actor ki jagah direct apni Databricks email ID wala exact path likho
+          # Sahi hyphen format aur absolute email directory path ke sath configuration
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
