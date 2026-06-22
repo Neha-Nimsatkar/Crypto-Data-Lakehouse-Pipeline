@@ -21,5 +21,4 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          # Yeh command aapke pure folder structure ko Databricks Workspace ke andar safe upload kar degi
-          databricks workspace import_dir ./batch_pipeline /Users/${{ github.actor }}/batch_pipeline --overwrite
+          databricks workspace import_dir ./batch_pipeline /Users/${{ github.actor }}/batch_pipeline
