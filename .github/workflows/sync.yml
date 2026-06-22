@@ -21,4 +21,4 @@ jobs:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          databricks workspace import_dir ./batch_pipeline /Users/${{ github.actor }}/batch_pipeline
+          databricks workspace import-dir ./batch_pipeline /Users/${{ github.actor }}/batch_pipeline
