@@ -1,4 +1,4 @@
-name: Push Files to Databricks Free Edition
+name: Push and Run Files on Databricks Free Edition
 
 on:
   push:
@@ -12,15 +12,24 @@ jobs:
       - name: Checkout GitHub Repository
         uses: actions/checkout@v4
 
-      # Tumhari working curl command wapas le aaye
       - name: Install Databricks CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
+      # 1. Sync Section: Syncing all project folders to your user space
       - name: Sync Files to Workspace
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
-          # Sahi hyphen format aur absolute email directory path ke sath configuration
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
+
+      # 2. Execution Section: Triggering the Ingestion Script Remotely with dynamic AWS env injection
+      - name: Execute Ingestion Pipeline Remote
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          databricks labs sandbox run /Users/1492neha@gmail.com/batch_pipeline/ingestion/crypto_api_fetch.py
