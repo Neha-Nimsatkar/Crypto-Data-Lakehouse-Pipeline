@@ -1,1 +1,25 @@
-a
+name: Push Files to Databricks Free Edition
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout GitHub Repository
+        uses: actions/checkout@v4
+
+      - name: Install Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Sync Files to Workspace
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          # Yeh command aapke pure folder structure ko Databricks Workspace ke andar safe upload kar degi
+          databricks workspace import_dir ./batch_pipeline /Users/${{ github.actor }}/batch_pipeline --overwrite
