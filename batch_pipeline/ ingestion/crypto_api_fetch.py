@@ -3,25 +3,10 @@ File        : crypto_api_fetch.py
 Location    : batch_pipeline/ingestion/
 Description : Fetches real-time cryptocurrency prices from the CoinGecko API
               and uploads raw JSON data to AWS S3 as the Bronze ingestion layer.
+              Updated for Databricks cloud orchestration native compatibility.
 
 Input       : CoinGecko API (public, no auth required)
-Output      : s3://<BUCKET_NAME>/bronze/batch_<timestamp>.json
-
-Dependencies:
-    - requests
-    - boto3
-
-Environment Variables Required (.env):
-    - AWS_ACCESS_KEY_ID
-    - AWS_SECRET_ACCESS_KEY
-    - AWS_REGION
-    - S3_BUCKET_NAME
-
-Usage:
-    python crypto_api_fetch.py
-
-Warning:
-    Never hardcode AWS credentials. Always load from environment variables.
+Output      : s3://crypto-lakehouse-nehaa/bronze/batch_<timestamp>.json
 """
 
 import os
@@ -29,24 +14,32 @@ import json
 import requests
 import boto3
 from datetime import datetime
-from dotenv import load_dotenv
 
-load_dotenv()
+# ── UPGRADE: Databricks Workflow Parameters Handling ─────────────────────────
+try:
+    from pyspark.dbutils import DBUtils
+    from pyspark.sql import SparkSession
+    spark = SparkSession.builder.getOrCreate()
+    dbutils = DBUtils(spark)
+    # Databricks Task parameter se parameters extract karega
+    BUCKET_NAME = dbutils.widgets.get("s3_bucket_name")
+except Exception:
+    # Fallback option: local execution via .env testing
+    from dotenv import load_dotenv
+    load_dotenv()
+    BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-COINS    = "bitcoin,ethereum,solana"
+COINS = (
+    "bitcoin,ethereum,solana,ripple,cardano,dogecoin,polkadot,polygon,"
+    "shiba-inu,avalanche-2,chainlink,uniswap,litecoin,stellar,near"
+)
 CURRENCY = "usd"
 BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
 
-BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-neha")
-
-# ── AWS Client ────────────────────────────────────────────────────────────────
-s3 = boto3.client(
-    "s3",
-    aws_access_key_id     = os.getenv("AWS_ACCESS_KEY_ID"),
-    aws_secret_access_key = os.getenv("AWS_SECRET_ACCESS_KEY"),
-    region_name           = os.getenv("AWS_REGION", "us-east-1"),
-)
+# ── AWS Client (Upgraded for Cloud Security Standards) ───────────────────────
+# Explicit hardcoded keys bypass karke dynamic underlying IAM instance profile policy utilize karega
+s3 = boto3.client("s3")
 
 # ── Ingestion ─────────────────────────────────────────────────────────────────
 def run_ingestion():
@@ -54,10 +47,10 @@ def run_ingestion():
     print(f"[{start_time.strftime('%Y-%m-%d %H:%M:%S')}] INFO: Starting ingestion process...")
 
     params = {
-        "ids"                  : COINS,
-        "vs_currencies"        : CURRENCY,
-        "include_market_cap"   : "true",
-        "include_24hr_vol"     : "true",
+        "ids"                     : COINS,
+        "vs_currencies"          : CURRENCY,
+        "include_market_cap"     : "true",
+        "include_24hr_vol"       : "true",
         "include_last_updated_at": "true",
     }
 

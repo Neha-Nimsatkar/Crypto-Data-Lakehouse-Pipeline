@@ -1,3 +1,4 @@
+
 """
 File        : silver_validation.py
 Location    : batch_pipeline/medallion/silver/
@@ -27,29 +28,27 @@ Warning:
     display() function is Databricks-native and will not work outside Databricks.
 """
 
-
-import datetime
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-
-
 # ── Configuration ─────────────────────────────────────────────────────────────
-TABLE_NAME        = "workspace.default.silver_crypto_prices"
+CATALOG           = "workspace"
+SCHEMA            = "default"
+TABLE_NAME        = f"{CATALOG}.{SCHEMA}.silver_crypto_prices"
+
 SLA_THRESHOLD_MIN = 30
 BITCOIN_PRICE_MIN = 10_000
 BITCOIN_PRICE_MAX = 250_000
 PRICE_JUMP_PCT    = 0.20
 
 
-
 # ── Load Silver Table ─────────────────────────────────────────────────────────
+# Read dynamically via spark catalog engine metadata binding
 df_check = spark.read.table(TABLE_NAME)
 
 print("─" * 60)
-print("  SILVER LAYER: FINAL VALIDATION & OBSERVABILITY")
+print("  SILVER LAYER: FINAL VALIDATION & OBSERVABILITY (16 COINS METRICS)")
 print("─" * 60)
-
 
 
 # ── Check 1: Integrity ────────────────────────────────────────────────────────
@@ -67,16 +66,13 @@ print(f"  {'PASS' if duplicate_count == 0 else 'FAIL'}     : Duplicate records  
 print(f"  {'PASS' if null_prices == 0 else 'FAIL'}     : NULL price records    : {null_prices}")
 
 
-
 # ── Check 2: Transformation Logic ────────────────────────────────────────────
 print("\n[CHECK 2] Transformation Logic")
 
-flag_values = [
-    row["price_change_flag"]
-    for row in df_check.select("price_change_flag").distinct().collect()
-]
+# Safely extract distinct string flags using functional map matrix
+flag_rows = df_check.select("price_change_flag").distinct().collect()
+flag_values = [row["price_change_flag"] for row in flag_rows]
 print(f"  INFO     : Detected price change flags : {flag_values}")
-
 
 
 # ── Check 3: Storage & Partitioning ──────────────────────────────────────────
@@ -86,22 +82,30 @@ dates_count = df_check.select("date").distinct().count()
 print(f"  INFO     : Unique date partitions      : {dates_count}")
 
 
-
 # ── Check 4: Data Freshness (SLA) ─────────────────────────────────────────────
 print("\n[CHECK 4] Data Freshness")
 
 try:
-    latest_ts  = df_check.select(F.max("event_timestamp")).collect()[0][0]
-    current_ts = datetime.datetime.now()
-    delay_mins = (current_ts - latest_ts.replace(tzinfo=None)).total_seconds() / 60
+    # Production Optimized: Spark standard functional engine metrics matching without timezone drifts
+    freshness_df = df_check.select(
+        F.max("event_timestamp").alias("latest_ts"),
+        F.current_timestamp().alias("current_ts")
+    ).withColumn(
+        "delay_mins", 
+        (F.unix_timestamp("current_ts") - F.unix_timestamp("latest_ts")) / 60
+    )
+    
+    metrics_row = freshness_df.collect()[0]
+    delay_mins = metrics_row["delay_mins"]
 
-    if delay_mins > SLA_THRESHOLD_MIN:
+    if delay_mins is None:
+        print("  WARNING  : No records found to process freshness SLA checks.")
+    elif delay_mins > SLA_THRESHOLD_MIN:
         print(f"  ALERT    : Data is STALE — last update {round(delay_mins, 2)} mins ago")
     else:
         print(f"  PASS     : Data is fresh — {round(delay_mins, 2)} mins old")
 except Exception as e:
-    print(f"  WARNING  : Could not calculate data freshness: {e}")
-
+    print(f"  WARNING  : Could not calculate data freshness metrics: {e}")
 
 
 # ── Check 5: Volume per Coin ──────────────────────────────────────────────────
@@ -113,9 +117,9 @@ coin_counts = (
     .orderBy("coin_id")
     .collect()
 )
+print(f"  INFO     : Total unique assets tracked: {len(coin_counts)}")
 for row in coin_counts:
-    print(f"  INFO     : {row['coin_id']:<12} — {row['count']} rows")
-
+    print(f"  INFO     : {row['coin_id']:<15} — {row['count']} rows")
 
 
 # ── Check 6: Anomaly Detection ────────────────────────────────────────────────
@@ -132,17 +136,17 @@ else:
     print(f"  PASS     : Bitcoin price range valid ({BITCOIN_PRICE_MIN:,} – {BITCOIN_PRICE_MAX:,})")
 
 
-
 # ── Check 7: Price Stability ──────────────────────────────────────────────────
 print("\n[CHECK 7] Price Stability")
 
 jump_window = Window.partitionBy("coin_id").orderBy("event_timestamp")
 
+# Coalesce calculation handler avoids division by zero on initialization metrics
 df_jump = (
     df_check
     .withColumn("prev_price", F.lag("price_usd").over(jump_window))
     .withColumn("pct_change", F.abs(
-        (F.col("price_usd") - F.col("prev_price")) / F.col("prev_price")
+        (F.col("price_usd") - F.col("prev_price")) / F.coalesce(F.col("prev_price"), F.col("price_usd"))
     ))
 )
 
@@ -152,7 +156,6 @@ if major_jumps > 0:
     print(f"  WARNING  : {major_jumps} instance(s) of >{int(PRICE_JUMP_PCT * 100)}% price jump detected")
 else:
     print(f"  PASS     : No suspicious price jumps (>{int(PRICE_JUMP_PCT * 100)}%) detected")
-
 
 
 # ── Check 8: Lineage & Clock Sync ────────────────────────────────────────────
@@ -171,4 +174,5 @@ print("─" * 60)
 
 
 # ── Preview ───────────────────────────────────────────────────────────────────
+# Active cell preview pipeline render
 display(df_check.sort(F.col("event_timestamp").desc()).limit(15))
