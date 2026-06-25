@@ -26,8 +26,9 @@ API_KEY          = dbutils.widgets.get("kafka_api_key")
 API_SECRET       = dbutils.widgets.get("kafka_api_secret")
 TOPIC_NAME       = "crypto_market_ticks"
 
-# Shaded prefix for Serverless Compute active (Safely map kiya configuration ke liye)
-jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{API_KEY}' password='{API_SECRET}';"
+# Shaded prefix for Serverless Compute active
+# FIX: Internally explicit double quotes ("") lagaye hain username aur password par escape format ke sath
+jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
 # ── STEP 3: SPARK STRUCTURED STREAMING READ FROM AIVEN KAFKA ──
 kafka_df = (spark.readStream
@@ -39,7 +40,7 @@ kafka_df = (spark.readStream
     # Security Configurations 
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.mechanism", "PLAIN")
-    .option("kafka.sasl.jaas.config", jaas_config)  # Connected the serverless shaded config here
+    .option("kafka.sasl.jaas.config", jaas_config)  
     .load())
 
 # --- STEP 4: SCHEMA DEFINITION ---
