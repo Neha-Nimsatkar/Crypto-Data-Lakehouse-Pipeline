@@ -26,16 +26,19 @@ TOPIC_NAME = "crypto_market_ticks"
 # Shaded prefix for Serverless Compute active
 jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username='{API_KEY}' password='{API_SECRET}';"
 
-# --- STREAM READER ---
-kafka_stream_df = spark.readStream \
-    .format("kafka") \
-    .option("kafka.bootstrap.servers", BOOTSTRAP_SERVER) \
-    .option("kafka.security.protocol", "SASL_SSL") \
-    .option("kafka.sasl.mechanism", "PLAIN") \
-    .option("kafka.sasl.jaas.config", jaas_config) \
-    .option("subscribe", TOPIC_NAME) \
-    .option("startingOffsets", "latest") \
-    .load()
+
+# Spark structured streaming read from Aiven Kafka
+kafka_df = (spark.readStream
+    .format("kafka")
+    .option("kafka.bootstrap.servers", BOOTSTRAP_SERVER)
+    .option("subscribe", "crypto_market_ticks")
+    .option("startingOffsets", "latest")
+    
+    # Security Configurations (Ye parameters check karo)
+    .option("kafka.security.protocol", "SASL_SSL")
+    .option("kafka.sasl.mechanism", "PLAIN")
+    .option("kafka.sasl.jaas.config", f'org.apache.kafka.common.security.plain.PlainLoginModule required username="{API_KEY}" password="{API_SECRET}";')
+    .load())
 
 # --- SCHEMA DEFINITION ---
 crypto_schema = StructType([
