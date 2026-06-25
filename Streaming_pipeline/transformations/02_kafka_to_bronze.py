@@ -11,10 +11,16 @@ try:
 except Exception as e:
     print(" Checkpoint directory already clean or fresh.")
 
-# --- STEP 2: CONFIGURATION FETCHING ---
+# ── STEP 1.5: DEFINE WIDGET PLACEHOLDERS FOR WORKFLOW INHERITANCE ──
+# Yeh lines Databricks Workflow ko batayengi ki widgets runtime par defined hain!
+dbutils.widgets.text("kafka_bootstrap_server", "")
+dbutils.widgets.text("kafka_api_key", "")
+dbutils.widgets.text("kafka_api_secret", "")
+
+# ── STEP 2: CONFIGURATION FETCHING ────────────────────────────────
 BOOTSTRAP_SERVER = dbutils.widgets.get("kafka_bootstrap_server")
-API_KEY = dbutils.widgets.get("kafka_api_key")
-API_SECRET = dbutils.widgets.get("kafka_api_secret")
+API_KEY          = dbutils.widgets.get("kafka_api_key")
+API_SECRET       = dbutils.widgets.get("kafka_api_secret")
 TOPIC_NAME = "crypto_market_ticks"
 
 # Shaded prefix for Serverless Compute active
