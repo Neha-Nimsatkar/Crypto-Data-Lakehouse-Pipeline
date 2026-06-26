@@ -16,31 +16,30 @@ dbutils.widgets.text("kafka_api_key", "")
 dbutils.widgets.text("kafka_api_secret", "")
 
 # ── STEP 2: CONFIGURATION FETCHING WITH STRIP FIX ──
-# .strip('\'"') lagane se JSON waale outer quotes python variable se delete ho jayenge
-BOOTSTRAP_SERVER = dbutils.widgets.get("kafka_bootstrap_server").strip('\'"')
-API_KEY          = dbutils.widgets.get("kafka_api_key").strip('\'"')
-API_SECRET       = dbutils.widgets.get("kafka_api_secret").strip('\'"')
+# ── STEP 2: CONFIGURATION FETCHING WITH ADVANCED SANITIZATION ──
+# Replace completely cleans any hidden quotes or whitespaces coming from the JSON payload
+BOOTSTRAP_SERVER = dbutils.widgets.get("kafka_bootstrap_server").replace('"', '').replace("'", "").strip()
+API_KEY          = dbutils.widgets.get("kafka_api_key").replace('"', '').replace("'", "").strip()
+API_SECRET       = dbutils.widgets.get("kafka_api_secret").replace('"', '').replace("'", "").strip()
 TOPIC_NAME       = "crypto_market_ticks"
 
-# Confluent Cloud Security Configuration with clean parsed variables
+# Confluent Cloud exact JAAS config with escaped strings
 jaas_config = f"org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
-# ── STEP 3: SPARK STRUCTURED STREAMING READ FROM CONFLUENT KAFKA ──
-# ── STEP 3: SPARK STRUCTURED STREAMING READ FROM CONFLUENT KAFKA ──
+# ── STEP 3: SPARK STRUCTURED STREAMING READ WITH HARDENED OPTIONS ──
 kafka_df = (spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", BOOTSTRAP_SERVER)
     .option("subscribe", TOPIC_NAME)
     .option("startingOffsets", "latest")
     
-    # Standard Security Configurations
+    # Confluent Cloud Strict Security Protocols
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.sasl.jaas.config", jaas_config)
     
-    # CRITICAL CONFLUENT FIX: Ye do lines ensure karengi ki handshake reject na ho
+    # Enforcing strict endpoint identification to prevent AdminClient failure on serverless
     .option("kafka.ssl.endpoint.identification.algorithm", "https")
-    .option("kafka.client.dns.lookup", "use_all_dns_ips")
     .load())
 
 # --- STEP 4: SCHEMA DEFINITION ---
