@@ -1,3 +1,6 @@
+import boto3
+import json
+from botocore.exceptions import ClientError
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 
@@ -6,27 +9,40 @@ CHECKPOINT_PATH = "/Volumes/workspace/default/crypto_silver_volume/checkpoints/b
 
 try:
     dbutils.fs.rm(CHECKPOINT_PATH, recurse=True)
-    print(" Old incompatible checkpoints successfully cleared!")
+    print("🧹 Old incompatible checkpoints cleared!")
 except Exception as e:
-    print(" Checkpoint directory already clean or fresh.")
+    pass
 
-# ── STEP 1.5: DEFINE WIDGET PLACEHOLDERS FOR WORKFLOW INHERITANCE ──
-dbutils.widgets.text("kafka_bootstrap_server", "")
-dbutils.widgets.text("kafka_api_key", "")
-dbutils.widgets.text("kafka_api_secret", "")
+# ── 🔐 STEP 2: SECURE FETCH VIA AWS SECRETS MANAGER ──
+def get_crypto_secrets():
+    secret_name = "crypto/confluent/keys"
+    region_name = "ap-south-1"  # Tumhara exact AWS region jahan secret saved hai
 
-# ── STEP 2: CONFIGURATION FETCHING WITH STRIP FIX ──
-# ── STEP 2: CONFIGURATION FETCHING WITH ADVANCED SANITIZATION ──
-# Replace completely cleans any hidden quotes or whitespaces coming from the JSON payload
-# ── STEP 2: CONFIGURATION FETCHING WITH ADVANCED SANITIZATION ──
-BOOTSTRAP_SERVER = dbutils.widgets.get("kafka_bootstrap_server").replace('"', '').replace("'", "").strip()
-API_KEY          = dbutils.widgets.get("kafka_api_key").replace('"', '').replace("'", "").strip()
-API_SECRET       = dbutils.widgets.get("kafka_api_secret").replace('"', '').replace("'", "").strip()
+    # Create a Secrets Manager client
+    session = boto3.session.Session()
+    client = session.client(
+        service_name='secretsmanager',
+        region_name=region_name
+    )
+
+    try:
+        get_secret_value_response = client.get_secret_value(SecretId=secret_name)
+        secret = get_secret_value_response['SecretString']
+        return json.loads(secret)
+    except Exception as e:
+        print(f"❌ Failed to fetch secrets from AWS: {str(e)}")
+        raise e
+
+# Fetching the clean dictionary directly from AWS KMS
+aws_secrets = get_crypto_secrets()
+
+BOOTSTRAP_SERVER = aws_secrets["kafka_bootstrap_server"].strip()
+API_KEY          = aws_secrets["kafka_api_key"].strip()
+API_SECRET       = aws_secrets["kafka_api_secret"].strip()
 TOPIC_NAME       = "crypto_market_ticks"
 
-print(f"Server: {BOOTSTRAP_SERVER} | Key: {API_KEY}")
-#  THE ACCURATE FIX: Confluent ho ya kuch bhi, Databricks Serverless ke liye "kafkashaded." prefix mandatory hai!
-jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
+# Explicit escaping of strings inside JAAS format
+jaas_config = f"org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
 # ── STEP 3: SPARK STRUCTURED STREAMING READ ──
 kafka_df = (spark.readStream
@@ -35,7 +51,7 @@ kafka_df = (spark.readStream
     .option("subscribe", TOPIC_NAME)
     .option("startingOffsets", "latest")
     
-    # Serverless Shaded Security Matrix
+    # Secure Direct Cloud-Injected Properties
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.sasl.jaas.config", jaas_config)
@@ -56,7 +72,7 @@ parsed_stream_df = (kafka_df
     .select(from_json(col("json_payload"), crypto_schema).alias("data"))
     .select("data.*"))
 
-# --- STEP 6: LIVE STREAM SINK TO DELTA TABLE (BRONZE LAYER) ---
+# --- STEP 6: LIVE STREAM SINK TO DELTA TABLE ---
 query = (parsed_stream_df.writeStream
     .format("delta")
     .option("checkpointLocation", CHECKPOINT_PATH)
@@ -65,5 +81,4 @@ query = (parsed_stream_df.writeStream
     .toTable("workspace.default.crypto_bronze_table"))
 
 query.awaitTermination()
-
-print("🚀 Raw Confluent Kafka messages successfully clean-parsed and saved into Bronze Delta Table!")
+print("🚀 AWS Secrets backed stream successfully processed and landed in Bronze Layer!")
