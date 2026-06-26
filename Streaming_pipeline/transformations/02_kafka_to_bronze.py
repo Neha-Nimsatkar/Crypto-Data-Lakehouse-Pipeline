@@ -18,27 +18,26 @@ dbutils.widgets.text("kafka_api_secret", "")
 # ── STEP 2: CONFIGURATION FETCHING WITH STRIP FIX ──
 # ── STEP 2: CONFIGURATION FETCHING WITH ADVANCED SANITIZATION ──
 # Replace completely cleans any hidden quotes or whitespaces coming from the JSON payload
+# ── STEP 2: CONFIGURATION FETCHING WITH ADVANCED SANITIZATION ──
 BOOTSTRAP_SERVER = dbutils.widgets.get("kafka_bootstrap_server").replace('"', '').replace("'", "").strip()
 API_KEY          = dbutils.widgets.get("kafka_api_key").replace('"', '').replace("'", "").strip()
 API_SECRET       = dbutils.widgets.get("kafka_api_secret").replace('"', '').replace("'", "").strip()
 TOPIC_NAME       = "crypto_market_ticks"
 
-# Confluent Cloud exact JAAS config with escaped strings
-jaas_config = f"org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
+# 🚨 THE ACCURATE FIX: Confluent ho ya kuch bhi, Databricks Serverless ke liye "kafkashaded." prefix mandatory hai!
+jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
-# ── STEP 3: SPARK STRUCTURED STREAMING READ WITH HARDENED OPTIONS ──
+# ── STEP 3: SPARK STRUCTURED STREAMING READ ──
 kafka_df = (spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", BOOTSTRAP_SERVER)
     .option("subscribe", TOPIC_NAME)
     .option("startingOffsets", "latest")
     
-    # Confluent Cloud Strict Security Protocols
+    # Serverless Shaded Security Matrix
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.sasl.jaas.config", jaas_config)
-    
-    # Enforcing strict endpoint identification to prevent AdminClient failure on serverless
     .option("kafka.ssl.endpoint.identification.algorithm", "https")
     .load())
 
