@@ -1,6 +1,7 @@
-import boto3
+import os
+import sys
 import json
-from botocore.exceptions import ClientError
+import boto3
 from pyspark.sql.functions import col, from_json
 from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType
 
@@ -9,16 +10,31 @@ CHECKPOINT_PATH = "/Volumes/workspace/default/crypto_silver_volume/checkpoints/b
 
 try:
     dbutils.fs.rm(CHECKPOINT_PATH, recurse=True)
-    print("🧹 Old incompatible checkpoints cleared!")
+    print("Old incompatible checkpoints cleared!")
 except Exception as e:
     pass
 
-# ── 🔐 STEP 2: SECURE FETCH VIA AWS SECRETS MANAGER ──
+# ──  STEP 2: PARSE ARRAY STRINGS & INJECT RUNTIME ENVIRONMENT ──
+# Databricks Task Parameters pass array strings via standard sys.argv array
+try:
+    # sys.argv[0] script name hota hai, array ke elements index 1 aur 2 par aate hain
+    AWS_KEY = sys.argv[1].replace('"', '').replace("'", "").strip()
+    AWS_SEC = sys.argv[2].replace('"', '').replace("'", "").strip()
+    
+    # Explicit mapping into local python machine process dictionary
+    os.environ["AWS_ACCESS_KEY_ID"] = AWS_KEY
+    os.environ["AWS_SECRET_ACCESS_KEY"] = AWS_SEC
+    os.environ["AWS_DEFAULT_REGION"] = "ap-south-1"  # Mumbai Region matching your console
+    print(" AWS Runtime authorization variables successfully injected!")
+except IndexErorr:
+    print(" Critical: Please make sure you have passed exactly 2 strings in the Task Parameter array.")
+    raise
+
 def get_crypto_secrets():
     secret_name = "crypto/confluent/keys"
-    region_name = "ap-south-1"  # Tumhara exact AWS region jahan secret saved hai
+    region_name = "ap-south-1"
 
-    # Create a Secrets Manager client
+    # Boto3 implicitly maps AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY from os.environ
     session = boto3.session.Session()
     client = session.client(
         service_name='secretsmanager',
@@ -30,10 +46,10 @@ def get_crypto_secrets():
         secret = get_secret_value_response['SecretString']
         return json.loads(secret)
     except Exception as e:
-        print(f"❌ Failed to fetch secrets from AWS: {str(e)}")
+        print(f" Failed to fetch secrets from AWS: {str(e)}")
         raise e
 
-# Fetching the clean dictionary directly from AWS KMS
+# Fetching the clean dictionary directly from AWS Secrets Manager
 aws_secrets = get_crypto_secrets()
 
 BOOTSTRAP_SERVER = aws_secrets["kafka_bootstrap_server"].strip()
@@ -41,8 +57,8 @@ API_KEY          = aws_secrets["kafka_api_key"].strip()
 API_SECRET       = aws_secrets["kafka_api_secret"].strip()
 TOPIC_NAME       = "crypto_market_ticks"
 
-# Explicit escaping of strings inside JAAS format
-jaas_config = f"org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
+# Confluent Shaded Specification String Configuration for Serverless Compute Runtime
+jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
 # ── STEP 3: SPARK STRUCTURED STREAMING READ ──
 kafka_df = (spark.readStream
@@ -51,7 +67,7 @@ kafka_df = (spark.readStream
     .option("subscribe", TOPIC_NAME)
     .option("startingOffsets", "latest")
     
-    # Secure Direct Cloud-Injected Properties
+    # Serverless Shaded Core Protocols Handshake Settings
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.sasl.jaas.config", jaas_config)
@@ -81,4 +97,4 @@ query = (parsed_stream_df.writeStream
     .toTable("workspace.default.crypto_bronze_table"))
 
 query.awaitTermination()
-print("🚀 AWS Secrets backed stream successfully processed and landed in Bronze Layer!")
+print(" AWS Secrets backed stream successfully processed and landed in Bronze Layer!")
