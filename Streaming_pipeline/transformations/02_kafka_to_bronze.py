@@ -6,9 +6,9 @@ CHECKPOINT_PATH = "/Volumes/workspace/default/crypto_silver_volume/checkpoints/b
 
 try:
     dbutils.fs.rm(CHECKPOINT_PATH, recurse=True)
-    print("🧹 Old incompatible checkpoints successfully cleared!")
+    print(" Old incompatible checkpoints successfully cleared!")
 except Exception as e:
-    print("🔄 Checkpoint directory already clean or fresh.")
+    print(" Checkpoint directory already clean or fresh.")
 
 # ── STEP 1.5: DEFINE WIDGET PLACEHOLDERS FOR WORKFLOW INHERITANCE ──
 dbutils.widgets.text("kafka_bootstrap_server", "")
@@ -24,7 +24,8 @@ API_KEY          = dbutils.widgets.get("kafka_api_key").replace('"', '').replace
 API_SECRET       = dbutils.widgets.get("kafka_api_secret").replace('"', '').replace("'", "").strip()
 TOPIC_NAME       = "crypto_market_ticks"
 
-# 🚨 THE ACCURATE FIX: Confluent ho ya kuch bhi, Databricks Serverless ke liye "kafkashaded." prefix mandatory hai!
+print(f"Server: {BOOTSTRAP_SERVER} | Key: {API_KEY}")
+#  THE ACCURATE FIX: Confluent ho ya kuch bhi, Databricks Serverless ke liye "kafkashaded." prefix mandatory hai!
 jaas_config = f"kafkashaded.org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
 # ── STEP 3: SPARK STRUCTURED STREAMING READ ──
