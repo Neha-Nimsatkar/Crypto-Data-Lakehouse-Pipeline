@@ -26,17 +26,21 @@ TOPIC_NAME       = "crypto_market_ticks"
 jaas_config = f"org.apache.kafka.common.security.plain.PlainLoginModule required username=\"{API_KEY}\" password=\"{API_SECRET}\";"
 
 # ── STEP 3: SPARK STRUCTURED STREAMING READ FROM CONFLUENT KAFKA ──
+# ── STEP 3: SPARK STRUCTURED STREAMING READ FROM CONFLUENT KAFKA ──
 kafka_df = (spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", BOOTSTRAP_SERVER)
     .option("subscribe", TOPIC_NAME)
     .option("startingOffsets", "latest")
     
-    # Confluent Cloud Security Matrix
+    # Standard Security Configurations
     .option("kafka.security.protocol", "SASL_SSL")
     .option("kafka.sasl.mechanism", "PLAIN")
     .option("kafka.sasl.jaas.config", jaas_config)
+    
+    # CRITICAL CONFLUENT FIX: Ye do lines ensure karengi ki handshake reject na ho
     .option("kafka.ssl.endpoint.identification.algorithm", "https")
+    .option("kafka.client.dns.lookup", "use_all_dns_ips")
     .load())
 
 # --- STEP 4: SCHEMA DEFINITION ---
