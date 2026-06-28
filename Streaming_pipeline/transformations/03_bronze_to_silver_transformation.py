@@ -58,6 +58,6 @@ query_silver = df_final.writeStream \
 
     
 # ── MAGIC LINE: Enforces the script to wait until the execution stream safely ends ──
-query.awaitTermination()
+query_silver.awaitTermination()
 
 print(" Pipeline run completed successfully! Schema evolved and data loaded without syntax drops.")
