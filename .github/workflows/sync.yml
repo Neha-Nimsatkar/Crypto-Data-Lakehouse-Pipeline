@@ -1,35 +1,35 @@
 name: Databricks Code Deployment and Automated Execution Pipeline
 
 on:
-  push:
-    branches:
-      - main
+  push:
+    branches:
+      - main
 
 jobs:
-  deploy-and-run:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Repository Source Code
-        uses: actions/checkout@v4
+  deploy-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository Source Code
+        uses: actions/checkout@v4
 
-      - name: Setup Databricks Automation CLI
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      - name: Setup Databricks Automation CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
-      # Pushing everything over to the cloud environment workspace path
-      - name: Upload Workspace Directories to Databricks
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
+      # Pushing everything over to the cloud environment workspace path
+      - name: Upload Workspace Directories to Databricks
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
 
-      # Fire the single controller orchestration manager script
-      - name: Trigger Master Pipeline Sequence Remotely
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        run: |
-          databricks labs sandbox run /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
+      # Fire the single controller orchestration manager script
+      - name: Trigger Master Pipeline Sequence Remotely
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          databricks labs sandbox run /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
