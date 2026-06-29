@@ -3,9 +3,19 @@
 
 
 
+import os
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
+
+try:
+    from databricks.sdk.runtime import dbutils
+    AWS_ACCESS_KEY = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_id")
+    AWS_SECRET_KEY = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_secret")
+except Exception as vault_err:
+    print("dbutils not available, trying environment variables...")
+    AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 
 BUCKET_NAME = "crypto-lakehouse-nehaa"
 
@@ -15,9 +25,9 @@ GOLD_PERFORMANCE = "workspace.default.gold_price_performance"
 GOLD_DAILY_TRENDS = "workspace.default.gold_daily_trends"
 
 
-PATH_GOLD_SNAPSHOT = f"s3a://{BUCKET_NAME}/gold/latest_snapshot"
-PATH_GOLD_PERFORMANCE = f"s3a://{BUCKET_NAME}/gold/price_performance"
-PATH_GOLD_DAILY_TRENDS = f"s3a://{BUCKET_NAME}/gold/daily_trends"
+PATH_GOLD_SNAPSHOT = f"s3://{BUCKET_NAME}/gold/latest_snapshot"
+PATH_GOLD_PERFORMANCE = f"s3://{BUCKET_NAME}/gold/price_performance"
+PATH_GOLD_DAILY_TRENDS = f"s3://{BUCKET_NAME}/gold/daily_trends"
 
 MOVING_AVG_WINDOW = 7
 
@@ -51,6 +61,8 @@ df_snapshot = (
     df_snapshot.write
     .format("delta")
     .mode("overwrite")
+    .option("fs.s3.awsAccessKeyId", AWS_ACCESS_KEY)
+    .option("fs.s3.awsSecretAccessKey", AWS_SECRET_KEY)
     .option("path", PATH_GOLD_SNAPSHOT)
     .option("mergeSchema", "true")
     .saveAsTable(GOLD_SNAPSHOT)
@@ -89,6 +101,8 @@ df_performance = (
     .format("delta")
     .mode("overwrite")
     .partitionBy("date")
+    .option("fs.s3.awsAccessKeyId", AWS_ACCESS_KEY)
+    .option("fs.s3.awsSecretAccessKey", AWS_SECRET_KEY)
     .option("path", PATH_GOLD_PERFORMANCE)
     .option("mergeSchema", "true")
     .saveAsTable(GOLD_PERFORMANCE)
@@ -119,6 +133,8 @@ df_daily = (
     .format("delta")
     .mode("overwrite")
     .partitionBy("date")
+    .option("fs.s3.awsAccessKeyId", AWS_ACCESS_KEY)
+    .option("fs.s3.awsSecretAccessKey", AWS_SECRET_KEY)
     .option("path", PATH_GOLD_DAILY_TRENDS)
     .option("mergeSchema", "true")
     .saveAsTable(GOLD_DAILY_TRENDS)

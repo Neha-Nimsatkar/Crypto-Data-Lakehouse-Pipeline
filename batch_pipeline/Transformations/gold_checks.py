@@ -1,4 +1,3 @@
-
 %sql
 -- gold layer validation queries
 -- checks latest snapshot, 24hr performance, and daily trends
@@ -62,7 +61,3 @@ SELECT
 FROM workspace.default.gold_daily_trends
 GROUP BY date, coin_id, daily_avg_price, daily_max_price, daily_min_price
 ORDER BY date DESC, daily_avg_price DESC;
-
-
-
-

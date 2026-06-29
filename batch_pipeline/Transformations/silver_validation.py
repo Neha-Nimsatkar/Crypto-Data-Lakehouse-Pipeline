@@ -1,4 +1,3 @@
-
 # validates silver delta table before promoting to gold
 # checks duplicates, nulls, price flags, freshness, volume, anomalies, and lineage
 # runs on Databricks — needs active SparkSession and Unity Catalog access

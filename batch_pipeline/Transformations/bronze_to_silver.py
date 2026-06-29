@@ -16,42 +16,64 @@ except Exception as vault_err:
     AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 
-if AWS_ACCESS_KEY and AWS_SECRET_KEY:
-    sc = spark.sparkContext
-    sc._jsc.hadoopConfiguration().set("fs.s3a.access.key", AWS_ACCESS_KEY)
-    sc._jsc.hadoopConfiguration().set("fs.s3a.secret.key", AWS_SECRET_KEY)
-    sc._jsc.hadoopConfiguration().set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
 
 BUCKET_NAME = "crypto-lakehouse-nehaa"
-BRONZE_PATH            = f"s3a://{BUCKET_NAME}/bronze/*.json"
-PRODUCTION_SILVER_PATH = f"s3a://{BUCKET_NAME}/silver/crypto_prices"
+BRONZE_PATH            = f"s3://{BUCKET_NAME}/bronze/*.json"
+PRODUCTION_SILVER_PATH = f"s3://{BUCKET_NAME}/silver/crypto_prices"
 CATALOG = "workspace"
 SCHEMA = "default"
 SILVER_TABLE = f"{CATALOG}.{SCHEMA}.silver_crypto_prices"
+
+EXPECTED_COINS = [
+    "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
+    "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink",
+    "uniswap", "litecoin", "stellar", "near"
+]
 
 
 print("silver transformations start")
 
 
-df_raw = spark.read.option("multiLine", "true").json(BRONZE_PATH)
+df_raw = (spark.read
+          .option("multiLine", "true")
+          .option("fs.s3.awsAccessKeyId", AWS_ACCESS_KEY)
+          .option("fs.s3.awsSecretAccessKey", AWS_SECRET_KEY)
+          .json(BRONZE_PATH))
 print(f"\n bronze data loaded securely")
 
 ingested_at_col = F.col("ingestion_metadata.ingested_at").alias("ingested_at_str")
 
 all_columns = df_raw.columns
-dynamic_coins = [col for col in all_columns if col != "ingestion_metadata"]
-print(f"found {len(dynamic_coins)} coins in bronze data")
-print(f"coins: {dynamic_coins}")
 
-df_with_meta = df_raw.select(ingested_at_col, *[F.col(coin) for coin in dynamic_coins])
+select_exprs = []
+if "ingestion_metadata" in all_columns:
+    select_exprs.append(ingested_at_col)
+else:
+    select_exprs.append(F.lit(None).cast("string").alias("ingested_at_str"))
 
+for coin in EXPECTED_COINS:
+    if coin in all_columns:
+        select_exprs.append(F.col(f"`{coin}`"))
+    else:
+        null_struct = F.struct(
+            F.lit(None).cast("double").alias("usd"),
+            F.lit(None).cast("double").alias("usd_market_cap"),
+            F.lit(None).cast("double").alias("usd_24h_vol"),
+            F.lit(None).cast("long").alias("last_updated_at")
+        )
+        select_exprs.append(null_struct.alias(coin))
+
+df_with_meta = df_raw.select(*select_exprs)
+
+print(f"found {len(EXPECTED_COINS)} coins in bronze data")
+print(f"coins: {EXPECTED_COINS}")
 
 
 # Explode dynamic coin columns maps into clean rows
 df_exploded = df_with_meta.select(
     "ingested_at_str",
     F.explode(
-        F.create_map(*[item for coin in dynamic_coins for item in (F.lit(coin), F.col(coin))])
+        F.create_map(*[item for coin in EXPECTED_COINS for item in (F.lit(coin), F.col(coin))])
     ).alias("coin_id", "data")
 ).filter(F.col("data").isNotNull())
 
@@ -133,6 +155,8 @@ print(f"s3 path: {PRODUCTION_SILVER_PATH}")
     .format("delta")
     .mode("overwrite")
     .partitionBy("date")
+    .option("fs.s3.awsAccessKeyId", AWS_ACCESS_KEY)
+    .option("fs.s3.awsSecretAccessKey", AWS_SECRET_KEY)
     .option("path", PRODUCTION_SILVER_PATH)  # write to S3 directly
     .option("mergeSchema", "true") 
     .saveAsTable(SILVER_TABLE)
