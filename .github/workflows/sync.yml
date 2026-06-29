@@ -25,7 +25,7 @@ jobs:
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
 
-      # Fire the single controller orchestration manager script
+     # Fire the single controller orchestration manager script locally on the runner
       - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
@@ -33,19 +33,5 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          databricks jobs submit --json '{
-            "run_name": "Crypto Data Lakehouse Sequencer Run",
-            "tasks": [
-              {
-                "task_key": "orchestrator_execution",
-                "spark_python_task": {
-                  "python_file": "/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py"
-                },
-                "new_cluster": {
-                  "spark_version": "14.3.x-scala2.12",
-                  "node_type_id": "i3.xlarge",
-                  "num_workers": 1
-                }
-              }
-            ]
-          }'
+          pip install databricks-sdk
+          python ./batch_pipeline/orchestrator.py
