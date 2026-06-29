@@ -2,32 +2,38 @@ import os
 import sys
 import subprocess
 
-
+# This line ensures dbutils works inside background script tasks
 try:
     from databricks.sdk.runtime import dbutils
 except ImportError:
     pass
-..
+
 def run_script_via_cli(script_relative_path, aws_credentials):
-    """Executes a Python file in a clean subprocess, passing AWS credentials forward."""
+    """Executes a Python file in a clean subprocess, bubbling up outputs and errors."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
     absolute_path = os.path.normpath(os.path.join(base_dir, script_relative_path))
     
     print(f"Executing step: {script_relative_path}...")
     
-    # Clone the existing environment and inject the dynamic AWS secrets
     current_env = os.environ.copy()
     current_env.update(aws_credentials)
     
-    # Execute the script passing down the environment keys
+    # We change capture_output to True to read the script's logs if it crashes
     result = subprocess.run(
         [sys.executable, absolute_path], 
-        capture_output=False, 
+        capture_output=True, 
         text=True,
         env=current_env
     )
     
+    # Always print stdout to your logs so you see your prints
+    if result.stdout:
+        print(result.stdout)
+        
     if result.returncode != 0:
+        # If the script fails, print its error log directly to the terminal
+        if result.stderr:
+            print(f"--- Subprocess Stderr Error ---\n{result.stderr}", file=sys.stderr)
         raise RuntimeError(f"Step failed with exit code {result.returncode}: {script_relative_path}")
         
     print(f"Finished step: {script_relative_path} safely.\n")
@@ -35,14 +41,14 @@ def run_script_via_cli(script_relative_path, aws_credentials):
 def run_pipeline():
     print("Starting Crypto Metric Data Lakehouse Sequencer on Serverless Compute...")
     
-    # 1. Safely fetch secrets from Databricks Secrets utility
     aws_secrets = {}
     try:
         aws_secrets["AWS_ACCESS_KEY_ID"] = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_id")
         aws_secrets["AWS_SECRET_ACCESS_KEY"] = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_secret")
         print("AWS credentials safely initialized from Databricks Secrets.\n")
     except Exception as e:
-        print(f"Warning: Failed to fetch secrets from dbutils (relying on environment): {str(e)}\n")
+        print(f"Critical Error: Failed to fetch secrets from dbutils: {str(e)}\n", file=sys.stderr)
+        sys.exit(1)
 
     try:
         # Phase 1: Bronze Ingestion
