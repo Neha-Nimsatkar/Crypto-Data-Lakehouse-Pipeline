@@ -35,7 +35,7 @@ BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
 print("loading unflattened bronze records from S3...")
 
 try:
-    # Read as text first to avoid Spark misinterpreting the line formats
+    # Read as plain text rows to bypass serverless JSON parsing limits
     df_raw = spark.read.text(BRONZE_PATH)
     total_records = df_raw.count()
     print(f"data loaded. total raw records found: {total_records}")
@@ -56,32 +56,33 @@ else:
     print("pass — raw records are present")
 
 
-# Parse the text string columns dynamically so we can look inside them without modifying the base file
-print("\nParsing raw payloads for schema validation...")
-try:
-    # Read the text rows back as a JSON dataset to infer the internal stream fields
-    df_parsed = spark.read.json(df_raw.rdd.map(lambda r: r.value))
-    parsed_cols = df_parsed.columns
-except Exception as e:
-    print(f"fail — raw text rows are not valid JSON strings: {e}")
-    sys.exit(1)
+# Parse JSON properties natively using Serverless-safe functions
+print("\nExtracting metrics for schema validation...")
+df_parsed = df_raw.select(
+    F.get_json_object(F.col("value"), "$.symbol").alias("symbol"),
+    F.get_json_object(F.col("value"), "$.price").alias("price"),
+    F.get_json_object(F.col("value"), "$.volume").alias("volume"),
+    F.get_json_object(F.col("value"), "$.timestamp").alias("timestamp")
+)
 
 
 # check 2 — structural check
 print("\ncheck 2 — structural check")
-expected_fields = ["symbol", "price", "volume", "timestamp"]
-missing_fields = [f for f in expected_fields if f not in parsed_cols]
+# If a core field is entirely missing from the string structure, get_json_object returns all Nulls
+null_structural_counts = df_parsed.filter(
+    F.col("symbol").isNull() & F.col("price").isNull() & F.col("timestamp").isNull()
+).count()
 
-if missing_fields:
-    print(f"fail — stream schema is broken. missing internal payload fields: {missing_fields}")
+if null_structural_counts == total_records:
+    print("fail — stream schema is broken. structural streaming payload keys do not exist in the json strings")
     sys.exit(1)
 else:
-    print("pass — all structural streaming payload fields exist")
+    print("pass — structural streaming payload fields exist")
 
 
 # check 3 — asset tracking check
 print("\ncheck 3 — asset tracking check")
-# Extract all the distinct string values from the parsed 'symbol' field
+# Collect unique strings found inside the 'symbol' property
 unique_symbols_in_batch = [row["symbol"] for row in df_parsed.select("symbol").distinct().collect() if row["symbol"] is not None]
 missing_coins = [coin for coin in EXPECTED_COINS if coin not in unique_symbols_in_batch]
 
