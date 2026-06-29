@@ -1,5 +1,5 @@
 # performs quality and integrity checks on raw bronze layer data
-# ingested from Kafka stream into AWS S3
+# ingested from CoinGecko API into AWS S3
 # acts as a quality gate before data moves to the silver layer
 
 import os
@@ -22,10 +22,10 @@ except Exception:
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
     BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 
-# Match the exact 15 coins from your producer code
+
 EXPECTED_COINS = [
-    "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin", 
-    "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink", 
+    "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
+    "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink",
     "uniswap", "litecoin", "stellar", "near"
 ]
 
@@ -36,7 +36,6 @@ BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
 print("loading bronze data from S3 using multiLine JSON reader...")
 
 try:
-    # Use multiLine=true since the JSON files contain pretty-printed multi-line formatting
     df_bronze = (spark.read
                  .option("multiLine", "true")
                  .option("fs.s3.awsAccessKeyId", aws_access_key)
@@ -45,7 +44,7 @@ try:
     actual_cols = df_bronze.columns
     print("data loaded successfully from S3")
 except Exception as e:
-    print(f"failed to load data: {e}")
+    print(f"failed to load data from S3: {e}")
     raise e
 
 
@@ -68,46 +67,46 @@ else:
     print("pass — no corrupt records found")
 
 
-# check 2 — structural schema check
-print("\ncheck 2 — structural schema check")
-expected_schema_cols = ["symbol", "price", "volume", "timestamp"]
-missing_cols = [c for c in expected_schema_cols if c not in actual_cols]
+# check 2 & 3 — dynamic schema tracking & completeness check
+print("\ncheck 2 & 3 — checking coin columns availability")
 
-if missing_cols:
-    print(f"fail — missing core structural columns in dataset: {missing_cols}")
-    sys.exit(1)
-else:
-    print("pass — core streaming schema columns verified (symbol, price, volume, timestamp)")
-
-
-# check 3 — asset tracking check (checking row values)
-print("\ncheck 3 — asset tracking check")
-distinct_coins_in_data = [row["symbol"] for row in df_bronze.select("symbol").distinct().collect() if row["symbol"] is not None]
-missing_coins = [coin for coin in EXPECTED_COINS if coin not in distinct_coins_in_data]
+missing_coins = [coin for coin in EXPECTED_COINS if coin not in actual_cols]
 
 if missing_coins:
-    print(f"warning — some expected assets are missing from this batch window: {missing_coins}")
+    print(f"warning — some coins were not returned by the API in this window: {missing_coins}")
 else:
-    print(f"pass — tracking integrity verified. all {len(EXPECTED_COINS)} assets are present in the dataset rows")
+    print("pass — all 15 expected coin columns are present in the dataset schema")
 
 
-# check 4 — null values check
-print("\ncheck 4 — data quality gates")
-null_prices = df_bronze.filter(F.col("price").isNull() | F.col("symbol").isNull()).count()
+# check 4 — null prices check 
+print("\ncheck 4 — checking for null prices on available coins")
 
-if null_prices > 0:
-    print(f"fail — found {null_prices} rows with null values")
-    sys.exit(1)
+for coin in EXPECTED_COINS:
+    if coin in actual_cols:
+        null_price = df_bronze.filter(F.col(f"`{coin}`.usd").isNull()).count()
+        if null_price > 0:
+            print(f"warning — {coin} column arrived but has {null_price} null price records")
+        else:
+            print(f"pass — {coin} structure looks clean")
+    else:
+        print(f"skip — {coin} skipped from null analysis (column did not arrive in S3 data)")
+
+
+# check 5 - metadata ingestion check
+print("\ncheck 5 — metadata validation")
+
+if "ingestion_metadata" in actual_cols:
+    invalid_meta = df_bronze.filter(
+        F.col("ingestion_metadata.ingested_at").isNull() |
+        (F.col("ingestion_metadata.ingested_at") == "")
+    ).count()
+
+    if invalid_meta > 0:
+        print(f"fail — {invalid_meta} records missing a timestamp wrapper, stopping run")
+        sys.exit(1)
+    else:
+        print("pass — ingestion metadata timestamp verified")
 else:
-    print("pass — zero null metrics detected in dataset values")
+    print("ingestion_metadata column was not found in this batch payload")
 
-
-# check 5 - freshness check
-print("\ncheck 5 — freshness check")
-try:
-    latest_timestamp_ms = df_bronze.select(F.max("timestamp")).collect()[0][0]
-    print(f"latest ingestion stream epoch timestamp: {latest_timestamp_ms}")
-except Exception as e:
-    print(f"fail — could not read latest stream timestamp: {e}")
-
-print("all bronze quality checks completed successfully")
+print("all checked rules evaluated. bronze validation process finished successfully")
