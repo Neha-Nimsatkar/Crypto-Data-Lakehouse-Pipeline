@@ -32,4 +32,19 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          databricks labs sandbox run /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
+          databricks jobs submit --json '{
+            "run_name": "Crypto Data Lakehouse Sequencer Run",
+            "tasks": [
+              {
+                "task_key": "orchestrator_execution",
+                "spark_python_task": {
+                  "python_file": "/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py"
+                },
+                "new_cluster": {
+                  "spark_version": "14.3.x-scala2.12",
+                  "node_type_id": "i3.xlarge",
+                  "num_workers": 1
+                }
+              }
+            ]
+          }'
