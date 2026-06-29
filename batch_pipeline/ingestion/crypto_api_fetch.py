@@ -13,18 +13,22 @@ import requests
 import boto3
 from datetime import datetime
 
-AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
-AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
+try:
+    from databricks.sdk.runtime import dbutils
+    AWS_KEY = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_id")
+    AWS_SECRET = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_secret")
+except Exception:
+    AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
 
-
-if not AWS_KEY or not AWS_SECRET:
-    try:
-        from dotenv import load_dotenv
-        load_dotenv()
-        AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
-        AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
-    except ImportError:
-        print(" Local dotenv module not found, relying on raw system environment vars.")
+    if not AWS_KEY or not AWS_SECRET:
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+            AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+            AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
+        except ImportError:
+            print(" Local dotenv module not found, relying on raw system environment vars.")
 
 
 if AWS_KEY and AWS_SECRET:
@@ -91,7 +95,7 @@ def run_ingestion():
         print(f" File : s3://{BUCKET_NAME}/{s3_key}")
         print(f" Completed : {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
         print(f" Duration: {duration:.2f} seconds")
-       
+        
 
 
     except requests.exceptions.HTTPError as http_err:

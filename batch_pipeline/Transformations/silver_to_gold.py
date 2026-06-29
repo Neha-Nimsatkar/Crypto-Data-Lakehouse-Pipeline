@@ -15,9 +15,9 @@ GOLD_PERFORMANCE = "workspace.default.gold_price_performance"
 GOLD_DAILY_TRENDS = "workspace.default.gold_daily_trends"
 
 
-PATH_GOLD_SNAPSHOT = f"s3://{BUCKET_NAME}/gold/latest_snapshot"
-PATH_GOLD_PERFORMANCE = f"s3://{BUCKET_NAME}/gold/price_performance"
-PATH_GOLD_DAILY_TRENDS = f"s3://{BUCKET_NAME}/gold/daily_trends"
+PATH_GOLD_SNAPSHOT = f"s3a://{BUCKET_NAME}/gold/latest_snapshot"
+PATH_GOLD_PERFORMANCE = f"s3a://{BUCKET_NAME}/gold/price_performance"
+PATH_GOLD_DAILY_TRENDS = f"s3a://{BUCKET_NAME}/gold/daily_trends"
 
 MOVING_AVG_WINDOW = 7
 
@@ -128,7 +128,3 @@ print(f" written to {GOLD_DAILY_TRENDS}")
 
 
 print("gold transformations completed..")
-
-
-
-

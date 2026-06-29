@@ -1,4 +1,4 @@
-name: Databricks Code Deployment and Automated Execution Pipeline
+name: Deploy and Run Crypto Lakehouse
 
 on:
   push:
@@ -10,46 +10,19 @@ jobs:
   deploy-and-run:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Repository Source Code
-        uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-      - name: Setup Databricks Automation CLI
+      - name: Authenticate and Update Databricks Git Folder
+        uses: databricks/run-notebook@v0.0.2
+        with:
+          databricks-host: ${{ secrets.DATABRICKS_HOST }}
+          databricks-token: ${{ secrets.DATABRICKS_TOKEN }}
+          git-commit: ${{ github.sha }} 
+
+      - name: Trigger Databricks Workflow Job
         run: |
-          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-      # Step 1: Push everything over to the cloud environment workspace path
-      - name: Upload Workspace Directories to Databricks
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
-  # # Step 2: Fire the single controller orchestration manager script on real Serverless Compute
-      - name: Trigger Master Pipeline Sequence Remotely
-        env:
-          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-        run: |
-          databricks jobs submit --json '{
-            "run_name": "crypto_orchestrator_serverless_run",
-            "tasks": [
-              {
-                "task_key": "crypto_orchestrator_task",
-                "spark_python_task": {
-                  "python_file": "/Workspace/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py",
-                  "source": "WORKSPACE"
-                },
-                "libraries": [
-                  {
-                    "pypi": {
-                      "package": "requests"
-                    }
-                  },
-                  {
-                    "pypi": {
-                      "package": "boto3"
-                    }
-                  }
-                ]
-              }
-            ]
-          }'
+          curl -X POST -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          https://${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now \
+          -d '{"job_id": YOUR_DATABRICKS_JOB_ID_HERE}'

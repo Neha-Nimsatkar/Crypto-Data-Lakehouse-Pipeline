@@ -1,4 +1,3 @@
-
 # reads bronze JSON from S3, flattens coin data, and writes to silver delta table
 # runs on Databricks — needs active SparkSession and S3 access
 
@@ -9,18 +8,23 @@ from pyspark.sql.window import Window
 
 
 try:
-    AWS_ACCESS_KEY = dbutils.secrets.get(scope="crypto-scope", key="aws-access-key")
-    AWS_SECRET_KEY = dbutils.secrets.get(scope="crypto-scope", key="aws-secret-key")
+    from databricks.sdk.runtime import dbutils
+    AWS_ACCESS_KEY = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_id")
+    AWS_SECRET_KEY = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_secret")
 except Exception as vault_err:
     print("dbutils not available, trying environment variables...")
     AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
     AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 
+if AWS_ACCESS_KEY and AWS_SECRET_KEY:
+    sc = spark.sparkContext
+    sc._jsc.hadoopConfiguration().set("fs.s3a.access.key", AWS_ACCESS_KEY)
+    sc._jsc.hadoopConfiguration().set("fs.s3a.secret.key", AWS_SECRET_KEY)
+    sc._jsc.hadoopConfiguration().set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
 
 BUCKET_NAME = "crypto-lakehouse-nehaa"
-encoded_secret_key = urllib.parse.quote_plus(AWS_SECRET_KEY)
-BRONZE_PATH            = f"s3a://{AWS_ACCESS_KEY}:{encoded_secret_key}@{BUCKET_NAME}/bronze/*.json"
-PRODUCTION_SILVER_PATH = f"s3://{BUCKET_NAME}/silver/crypto_prices"
+BRONZE_PATH            = f"s3a://{BUCKET_NAME}/bronze/*.json"
+PRODUCTION_SILVER_PATH = f"s3a://{BUCKET_NAME}/silver/crypto_prices"
 CATALOG = "workspace"
 SCHEMA = "default"
 SILVER_TABLE = f"{CATALOG}.{SCHEMA}.silver_crypto_prices"
@@ -136,6 +140,3 @@ print(f"s3 path: {PRODUCTION_SILVER_PATH}")
 
 
 print(f" 16 Coins Silver data processed and cataloged ")
-
-
-

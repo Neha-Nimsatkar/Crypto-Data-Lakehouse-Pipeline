@@ -11,14 +11,22 @@ import pyspark.sql.functions as F
 spark = SparkSession.builder.getOrCreate()
 
 try:
-    from pyspark.dbutils import DBUtils
-    dbutils = DBUtils(spark)
-    BUCKET_NAME = dbutils.widgets.get("s3_bucket_name")
+    from databricks.sdk.runtime import dbutils
+    aws_access_key = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_id")
+    aws_secret_key = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="aws_secret")
+    BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 except Exception:
     from dotenv import load_dotenv
     load_dotenv()
+    aws_access_key = os.getenv("AWS_ACCESS_KEY_ID")
+    aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
     BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 
+if aws_access_key and aws_secret_key:
+    sc = spark.sparkContext
+    sc._jsc.hadoopConfiguration().set("fs.s3a.access.key", aws_access_key)
+    sc._jsc.hadoopConfiguration().set("fs.s3a.secret.key", aws_secret_key)
+    sc._jsc.hadoopConfiguration().set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
 
 EXPECTED_COINS = [
     "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
@@ -27,7 +35,7 @@ EXPECTED_COINS = [
 ]
 EXPECTED_KEYS = EXPECTED_COINS + ["ingestion_metadata"]
 
-BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
+BRONZE_PATH = f"s3a://{BUCKET_NAME}/bronze/*.json"
 
 
 

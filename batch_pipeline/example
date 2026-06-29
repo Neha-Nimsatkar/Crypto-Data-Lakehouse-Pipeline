@@ -1,0 +1,881 @@
+name: Databricks Code Deployment and Automated Execution Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  deploy-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository Source Code
+        uses: actions/checkout@v4
+
+      - name: Setup Databricks Automation CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+      # Step 1: Push everything over to the cloud environment workspace path
+      - name: Upload Workspace Directories to Databricks
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
+  # # Step 2: Fire the single controller orchestration manager script on real Serverless Compute
+      - name: Trigger Master Pipeline Sequence Remotely
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          databricks jobs submit --json '{
+            "run_name": "crypto_orchestrator_serverless_run",
+            "tasks": [
+              {
+                "task_key": "crypto_orchestrator_task",
+                "spark_python_task": {
+                  "python_file": "/Workspace/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py",
+                  "source": "WORKSPACE"
+                },
+                "libraries": [
+                  {
+                    "pypi": {
+                      "package": "requests"
+                    }
+                  },
+                  {
+                    "pypi": {
+                      "package": "boto3"
+                    }
+                  }
+                ]
+              }
+            ]
+          }'
+
+
+
+          //crypto python_file
+          """
+fetches crypto prices from CoinGecko for 15 coins
+saves raw JSON to S3 bronze layer
+uses GitHub Actions secrets on cloud, dotenv locally
+
+"""
+
+
+import os
+import json
+import sys
+import requests
+import boto3
+from datetime import datetime
+
+AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+
+if not AWS_KEY or not AWS_SECRET:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+        AWS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+        AWS_SECRET = os.getenv("AWS_SECRET_ACCESS_KEY")
+    except ImportError:
+        print(" Local dotenv module not found, relying on raw system environment vars.")
+
+
+if AWS_KEY and AWS_SECRET:
+    s3 = boto3.client(
+        's3',
+        aws_access_key_id=AWS_KEY,
+        aws_secret_access_key=AWS_SECRET
+    )
+else:
+    print(" AWS keys not found in environment. Initializing generic fallback client.")
+    s3 = boto3.client('s3')
+
+
+BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
+COINS = (
+    "bitcoin,ethereum,solana,ripple,cardano,dogecoin,polkadot,polygon,"
+    "shiba-inu,avalanche-2,chainlink,uniswap,litecoin,stellar,near"
+)
+CURRENCY = "usd"
+BASE_URL = "https://api.coingecko.com/api/v3/simple/price"
+
+# 
+def run_ingestion():
+    start_time = datetime.now()
+    print(f"starting ingestion at {start_time.strftime('%Y-%m-%d %H:%M:%S')}")
+
+
+    params = {
+        "ids": COINS,
+        "vs_currencies" : CURRENCY,
+        "include_market_cap": "true",
+        "include_24hr_vol": "true",
+        "include_last_updated_at": "true",
+    }
+
+    try:
+        print(f"fetching prices for 15 coins...")
+        response = requests.get(BASE_URL, params=params, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+        print("Data fetched from CoinGecko API.")
+
+      
+        data["ingestion_metadata"] = {
+            "source" : "CoinGecko API",
+            "ingested_at" : datetime.now().isoformat(),
+            "coins": COINS,
+            "currency": CURRENCY,
+        }
+
+
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        s3_key    = f"bronze/batch_{timestamp}.json"
+        json_data = json.dumps(data, indent=4)
+
+        print(f"Uploading to s3://{BUCKET_NAME}/{s3_key} ...")
+        s3.put_object(Bucket=BUCKET_NAME, Key=s3_key, Body=json_data)
+
+        end_time = datetime.now()
+        duration = (end_time - start_time).total_seconds()
+
+       
+        print(f"Fetching Successfully Completed")
+        print(f" File : s3://{BUCKET_NAME}/{s3_key}")
+        print(f" Completed : {end_time.strftime('%Y-%m-%d %H:%M:%S')}")
+        print(f" Duration: {duration:.2f} seconds")
+       
+
+
+    except requests.exceptions.HTTPError as http_err:
+        print(f"HTTP error occurred: {http_err}")
+        raise
+    except requests.exceptions.ConnectionError:
+        print("Could not connect to CoinGecko API. Check internet connection.")
+        raise
+    except requests.exceptions.Timeout:
+        print("Request timed out after 30 seconds.")
+        raise
+    except Exception as e:
+        print(f"Unexpected error: {e}")
+        raise
+
+
+if __name__ == "__main__":
+    run_ingestion()
+
+
+
+//bronze validations 
+# performs quality and integrity checks on raw bronze layer data
+# ingested from CoinGecko API into AWS S3
+# acts as a quality gate before data moves to the silver layer
+
+import os
+import sys
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as F
+
+
+spark = SparkSession.builder.getOrCreate()
+
+try:
+    from pyspark.dbutils import DBUtils
+    dbutils = DBUtils(spark)
+    BUCKET_NAME = dbutils.widgets.get("s3_bucket_name")
+except Exception:
+    from dotenv import load_dotenv
+    load_dotenv()
+    BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
+
+
+EXPECTED_COINS = [
+    "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
+    "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink",
+    "uniswap", "litecoin", "stellar", "near"
+]
+EXPECTED_KEYS = EXPECTED_COINS + ["ingestion_metadata"]
+
+BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
+
+
+
+print("loading bronze data from S3...")
+
+try:
+    df_bronze = spark.read.option("multiLine", "true").json(BRONZE_PATH)
+    actual_keys = df_bronze.columns
+    print("data loaded from S3")
+except Exception as e:
+    print(f"failed to load data: {e}")
+    raise e
+
+
+
+print("running bronze validation checks")
+
+
+# check 1 - json integrity
+total_raw = df_bronze.count()
+print(f"check 1 — total records: {total_raw}")
+
+if "_corrupt_record" in actual_keys:
+    corrupt_count = df_bronze.filter(F.col("_corrupt_record").isNotNull()).count()
+    if corrupt_count > 0:
+        print(f"fail — {corrupt_count} corrupt records found, stopping run")
+        sys.exit(1)
+    else:
+        print("pass — no corrupt records found")
+else:
+    print("pass — no corrupt records found")
+
+
+# check 2 - schema
+print("\ncheck 2 — schema")
+
+missing_keys = [c for c in EXPECTED_KEYS if c not in actual_keys]
+extra_keys = [c for c in actual_keys if c not in EXPECTED_KEYS and c != "_corrupt_record"]
+
+if missing_keys:
+    print(f"fail — missing keys: {missing_keys}")
+    sys.exit(1)
+else:
+    print("pass — all 15 expected keys present")
+
+if extra_keys:
+    print(f"warning — extra fields found: {extra_keys}")
+
+
+# check 3 - completeness
+print("\ncheck 3 — null prices per coin")
+
+for coin in EXPECTED_COINS:
+    if coin in actual_keys:
+        null_price = df_bronze.filter(F.col(f"`{coin}`.usd").isNull()).count()
+        if null_price > 0:
+            print(f"fail — {coin} has {null_price} null prices")
+        else:
+            print(f"pass — {coin} looks clean")
+
+
+# check 4 - metadata
+print("\ncheck 4 — metadata")
+
+if "ingestion_metadata" in actual_keys:
+    invalid_meta = df_bronze.filter(
+        F.col("ingestion_metadata.ingested_at").isNull() |
+        (F.col("ingestion_metadata.ingested_at") == "")
+    ).count()
+
+    if invalid_meta > 0:
+        print(f"fail — {invalid_meta} records missing timestamp, stopping run")
+        sys.exit(1)
+    else:
+        print("pass — metadata looks good")
+else:
+    print("fail — ingestion_metadata column missing entirely")
+    sys.exit(1)
+
+
+# check 5 - freshness
+print("\ncheck 5 — freshness")
+
+try:
+    latest_ingestion = df_bronze.select(
+        F.max("ingestion_metadata.ingested_at")
+    ).collect()[0][0]
+    print(f"latest ingestion timestamp: {latest_ingestion}")
+except Exception as e:
+    print(f"fail — could not read latest timestamp: {e}")
+
+print("all checks passed")
+
+
+//bronze to silver 
+
+# reads bronze JSON from S3, flattens coin data, and writes to silver delta table
+# runs on Databricks — needs active SparkSession and S3 access
+
+import os
+import urllib.parse
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+try:
+    AWS_ACCESS_KEY = dbutils.secrets.get(scope="crypto-scope", key="aws-access-key")
+    AWS_SECRET_KEY = dbutils.secrets.get(scope="crypto-scope", key="aws-secret-key")
+except Exception as vault_err:
+    print("dbutils not available, trying environment variables...")
+    AWS_ACCESS_KEY = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
+
+
+BUCKET_NAME = "crypto-lakehouse-nehaa"
+encoded_secret_key = urllib.parse.quote_plus(AWS_SECRET_KEY)
+BRONZE_PATH            = f"s3a://{AWS_ACCESS_KEY}:{encoded_secret_key}@{BUCKET_NAME}/bronze/*.json"
+PRODUCTION_SILVER_PATH = f"s3://{BUCKET_NAME}/silver/crypto_prices"
+CATALOG = "workspace"
+SCHEMA = "default"
+SILVER_TABLE = f"{CATALOG}.{SCHEMA}.silver_crypto_prices"
+
+
+print("silver transformations start")
+
+
+df_raw = spark.read.option("multiLine", "true").json(BRONZE_PATH)
+print(f"\n bronze data loaded securely")
+
+ingested_at_col = F.col("ingestion_metadata.ingested_at").alias("ingested_at_str")
+
+all_columns = df_raw.columns
+dynamic_coins = [col for col in all_columns if col != "ingestion_metadata"]
+print(f"found {len(dynamic_coins)} coins in bronze data")
+print(f"coins: {dynamic_coins}")
+
+df_with_meta = df_raw.select(ingested_at_col, *[F.col(coin) for coin in dynamic_coins])
+
+
+
+# Explode dynamic coin columns maps into clean rows
+df_exploded = df_with_meta.select(
+    "ingested_at_str",
+    F.explode(
+        F.create_map(*[item for coin in dynamic_coins for item in (F.lit(coin), F.col(coin))])
+    ).alias("coin_id", "data")
+).filter(F.col("data").isNotNull())
+
+print(f"JSON dynamically flattened ..")
+
+
+# Clean and Cast Columns
+df_cleaned = df_exploded.select(
+    F.lower(F.col("coin_id")).alias("coin_id"),
+    F.col("data.usd").cast("double").alias("price_usd"),
+    F.col("data.usd_market_cap").cast("double").alias("market_cap"),
+    F.col("data.usd_24h_vol").cast("double").alias("volume_24h"),
+    F.col("data.last_updated_at").alias("api_last_updated_at"),
+    F.to_timestamp(F.col("ingested_at_str")).alias("ingested_at"),
+).filter(F.col("price_usd").isNotNull())
+print(f" cleaning and casting successfull")
+
+
+# Timestamps and Partitioning Columns
+df_transformed = (
+    df_cleaned
+    .withColumn("event_timestamp", F.to_timestamp(F.from_unixtime(F.col("api_last_updated_at"))))
+    .withColumn("date", F.to_date(F.col("event_timestamp")))
+    .withColumn("hour", F.hour(F.col("event_timestamp")))
+)
+print("timestamps extracted with date and hour columns added")
+
+
+# Derived Metrics 
+df_metrics = df_transformed.withColumn(
+    "ingestion_delay_seconds",
+    F.unix_timestamp(F.col("ingested_at")) - F.col("api_last_updated_at")
+)
+
+price_window = Window.partitionBy("coin_id").orderBy("event_timestamp")
+
+df_flags = (
+    df_metrics
+    .withColumn("prev_price", F.lag("price_usd").over(price_window))
+    .withColumn(
+        "price_change_flag",
+        F.when(F.col("prev_price").isNull(), "STABLE")
+         .when(F.col("price_usd") > F.col("prev_price"), "UP")
+         .when(F.col("price_usd") < F.col("prev_price"), "DOWN")
+         .otherwise("STABLE")
+    )
+)
+print("derived metrics added — ingestion delay and price change flag")
+
+
+
+# Deduplication
+dedup_window = Window.partitionBy("coin_id", "event_timestamp").orderBy(F.col("ingested_at").desc())
+
+df_deduped = (
+    df_flags
+    .withColumn("rn", F.row_number().over(dedup_window))
+    .filter(F.col("rn") == 1)
+    .drop("rn", "prev_price")
+)
+print(f" deduplicated successfull..")
+
+
+
+# Add Load Timestamp
+df_final = df_deduped.withColumn("load_timestamp", F.current_timestamp())
+print("load timestamp added")
+
+
+
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
+
+print(f"\n Writing to silver delta table: {SILVER_TABLE}")
+print(f"s3 path: {PRODUCTION_SILVER_PATH}")
+
+
+(
+    df_final.write
+    .format("delta")
+    .mode("overwrite")
+    .partitionBy("date")
+    .option("path", PRODUCTION_SILVER_PATH)  # write to S3 directly
+    .option("mergeSchema", "true") 
+    .saveAsTable(SILVER_TABLE)
+)
+
+
+print(f" 16 Coins Silver data processed and cataloged ")
+
+
+
+//silver validations
+
+# validates silver delta table before promoting to gold
+# checks duplicates, nulls, price flags, freshness, volume, anomalies, and lineage
+# runs on Databricks — needs active SparkSession and Unity Catalog access
+# display() is Databricks-native, won't work outside Databricks
+
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+CATALOG = "workspace"
+SCHEMA = "default"
+TABLE_NAME = f"{CATALOG}.{SCHEMA}.silver_crypto_prices"
+
+SLA_THRESHOLD_MIN = 30
+BITCOIN_PRICE_MIN = 10_000
+BITCOIN_PRICE_MAX = 250_000
+PRICE_JUMP_PCT = 0.20
+
+
+df_check = spark.read.table(TABLE_NAME)
+
+
+print("silver table validations begin..")
+
+
+
+# 1: Integrity 
+print("\ncheck 1 - Integrity")
+
+duplicate_count = (
+    df_check.groupBy("coin_id", "event_timestamp")
+    .count()
+    .filter("count > 1")
+    .count()
+)
+null_prices = df_check.filter(F.col("price_usd").isNull()).count()
+
+print(f"{'pass' if duplicate_count == 0 else 'fail'} — duplicates: {duplicate_count}")
+print(f" {'Pass' if null_prices == 0 else 'Fail'} : NULL price records: {null_prices}")
+
+
+# 2: Transformation Logic 
+print("\ncheck 2 -Transformation Logic")
+
+
+# check what flag values exist
+flag_rows = df_check.select("price_change_flag").distinct().collect()
+flag_values = [row["price_change_flag"] for row in flag_rows]
+print(f"price change flags found: {flag_values}")
+
+# 3: Storage & Partitioning 
+print("\ncheck 3 - Storage & Partitioning")
+
+dates_count = df_check.select("date").distinct().count()
+print(f"Unique date partitions : {dates_count}")
+
+
+# 4: Data Freshness
+print("\ncheck 4 - Data Freshness")
+
+try:
+    
+    freshness_df = df_check.select(
+        F.max("event_timestamp").alias("latest_ts"),
+        F.current_timestamp().alias("current_ts")
+    ).withColumn(
+        "delay_mins", 
+        (F.unix_timestamp("current_ts") - F.unix_timestamp("latest_ts")) / 60
+    )
+    
+    metrics_row = freshness_df.collect()[0]
+    delay_mins = metrics_row["delay_mins"]
+
+    if delay_mins is None:
+        print(" error - no records found to process freshness checks.")
+    elif delay_mins > SLA_THRESHOLD_MIN:
+        print(f"alert — data is stale, last update {round(delay_mins, 2)} mins ago")
+    else:
+        print(f"pass — data is fresh, {round(delay_mins, 2)} mins old")
+except Exception as e:
+    print(f" error - could not calculate data freshness metrics: {e}")
+
+
+# 5: Volume per Coin 
+print("\ncheck 5 - Volume")
+
+coin_counts = (
+    df_check.groupBy("coin_id")
+    .count()
+    .orderBy("coin_id")
+    .collect()
+)
+print(f" total unique assets tracked: {len(coin_counts)}")
+for row in coin_counts:
+    print(f" {row['coin_id']:<15} — {row['count']} rows")
+
+
+# 6: Anomaly Detection 
+print("\ncheck 6 - Anomaly Detection")
+
+outliers = df_check.filter(
+    (F.col("coin_id") == "bitcoin") &
+    ((F.col("price_usd") < BITCOIN_PRICE_MIN) | (F.col("price_usd") > BITCOIN_PRICE_MAX))
+).count()
+
+if outliers > 0:
+    print(f"fail — {outliers} impossible bitcoin prices found")
+else:
+    print(f"Pass - Bitcoin price range valid ({BITCOIN_PRICE_MIN:,} – {BITCOIN_PRICE_MAX:,})")
+
+
+# 7: Price Stability 
+print("\ncheck 7 - Price Stability")
+
+jump_window = Window.partitionBy("coin_id").orderBy("event_timestamp")
+
+
+df_jump = (
+    df_check
+    .withColumn("prev_price", F.lag("price_usd").over(jump_window))
+    .withColumn("pct_change", F.abs(
+        (F.col("price_usd") - F.col("prev_price")) / F.coalesce(F.col("prev_price"), F.col("price_usd"))
+    ))
+)
+
+major_jumps = df_jump.filter(F.col("pct_change") > PRICE_JUMP_PCT).count()
+
+if major_jumps > 0:
+    print(f" error - {major_jumps} instance(s) of >{int(PRICE_JUMP_PCT * 100)}% price jump detected")
+else:
+    print(f"pass — no price jumps over {int(PRICE_JUMP_PCT * 100)}%")
+
+
+# 8: Lineage & Clock Sync
+print("\ncheck 8 - Lineage")
+
+negative_delay = df_check.filter(F.col("ingestion_delay_seconds") < 0).count()
+
+if negative_delay > 0:
+    print(f"Fail - {negative_delay} record(s) have future timestamps (clock sync issue)")
+else:
+    print(f"pass — clock sync looks fine")
+
+
+
+
+print(" silver validation completed")
+
+display(df_check.sort(F.col("event_timestamp").desc()).limit(15))
+
+
+//silver to gold
+
+# Transforms Silver layer data into three Gold layer Delta tables 
+# optimised for business intelligence and analytics consumption.
+
+
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+BUCKET_NAME = "crypto-lakehouse-nehaa"
+
+SILVER_TABLE = "workspace.default.silver_crypto_prices"
+GOLD_SNAPSHOT = "workspace.default.gold_latest_snapshot"
+GOLD_PERFORMANCE = "workspace.default.gold_price_performance"
+GOLD_DAILY_TRENDS = "workspace.default.gold_daily_trends"
+
+
+PATH_GOLD_SNAPSHOT = f"s3://{BUCKET_NAME}/gold/latest_snapshot"
+PATH_GOLD_PERFORMANCE = f"s3://{BUCKET_NAME}/gold/price_performance"
+PATH_GOLD_DAILY_TRENDS = f"s3://{BUCKET_NAME}/gold/daily_trends"
+
+MOVING_AVG_WINDOW = 7
+
+df_silver = spark.read.table(SILVER_TABLE)
+
+
+print("gold layer transformation begins..")
+
+
+
+# Table 1: Latest Snapshot
+
+print("\n Table 1 - Building gold_latest_snapshot...")
+
+latest_window = Window.partitionBy("coin_id").orderBy(F.col("event_timestamp").desc())
+
+df_snapshot = (
+    df_silver
+    .withColumn("row_num", F.row_number().over(latest_window))
+    .filter(F.col("row_num") == 1)
+    .drop("row_num")
+    .select(
+        "coin_id",
+        "price_usd",
+        "market_cap",
+        "volume_24h",
+        "event_timestamp"
+    )
+)
+(
+    df_snapshot.write
+    .format("delta")
+    .mode("overwrite")
+    .option("path", PATH_GOLD_SNAPSHOT)
+    .option("mergeSchema", "true")
+    .saveAsTable(GOLD_SNAPSHOT)
+)
+print(f"written to {GOLD_SNAPSHOT}")
+
+
+
+# Table 2: Price Performance
+
+print("\n Table 2 - Building gold_price_performance...")
+
+perf_window = Window.partitionBy("coin_id").orderBy("event_timestamp").rowsBetween(-(MOVING_AVG_WINDOW - 1), 0)
+ranking_window = Window.partitionBy("event_timestamp").orderBy(F.col("market_cap").desc())
+
+df_performance = (
+    df_silver
+    .withColumn("moving_avg_price", F.avg("price_usd").over(perf_window))
+    .withColumn("raw_volatility",   F.stddev("price_usd").over(perf_window))
+    .withColumn("price_volatility", F.coalesce(F.col("raw_volatility"), F.lit(0.0)))
+    .withColumn("market_cap_rank",   F.rank().over(ranking_window))
+    .select(
+        "coin_id",
+        "event_timestamp",
+        "price_usd",
+        "market_cap",
+        "volume_24h",
+        F.round("moving_avg_price", 4).alias("moving_avg_price"),
+        F.round("price_volatility", 6).alias("price_volatility"), 
+        "market_cap_rank",
+        "date"
+    )
+)
+(
+    df_performance.write
+    .format("delta")
+    .mode("overwrite")
+    .partitionBy("date")
+    .option("path", PATH_GOLD_PERFORMANCE)
+    .option("mergeSchema", "true")
+    .saveAsTable(GOLD_PERFORMANCE)
+)
+print(f" written to {GOLD_PERFORMANCE}")
+
+
+
+
+# Table 3: Daily Trends
+
+print("\n Table 3 - Building gold_daily_trends...")
+
+df_daily = (
+    df_silver
+    .groupBy("date", "coin_id")
+    .agg(
+        F.round(F.avg("price_usd"), 4).alias("daily_avg_price"),
+        F.round(F.max("price_usd"), 4).alias("daily_max_price"),
+        F.round(F.min("price_usd"), 4).alias("daily_min_price"),
+        F.round(F.avg("volume_24h"), 2).alias("daily_avg_volume"),
+        F.count("*").alias("record_count")
+    )
+    .orderBy(F.col("date").desc(), F.col("daily_avg_price").desc())
+)
+(
+    df_daily.write
+    .format("delta")
+    .mode("overwrite")
+    .partitionBy("date")
+    .option("path", PATH_GOLD_DAILY_TRENDS)
+    .option("mergeSchema", "true")
+    .saveAsTable(GOLD_DAILY_TRENDS)
+)
+print(f" written to {GOLD_DAILY_TRENDS}")
+
+
+
+print("gold transformations completed..")
+
+
+
+//gold validations
+# validates gold layer delta tables — ranking, moving averages, and cross-table sync
+# runs on Databricks with Unity Catalog
+
+
+from pyspark.sql import functions as F
+from pyspark.sql.window import Window
+
+
+CATALOG = "workspace"
+SCHEMA = "default"
+GOLD_PERF_TABLE = f"{CATALOG}.{SCHEMA}.gold_price_performance"
+GOLD_SNAP_TABLE = f"{CATALOG}.{SCHEMA}.gold_latest_snapshot"
+
+
+df_perf = spark.read.table(GOLD_PERF_TABLE)
+df_snap = spark.read.table(GOLD_SNAP_TABLE)
+
+print("running gold validation checks")
+
+
+# 1: Ranking Integrity
+
+print("\n Check 1 - Ranking Integrity")
+
+rank_check = (
+    df_perf
+    .groupBy("event_timestamp", "market_cap_rank")
+    .count()
+    .filter("count > 1")
+    .count()
+)
+
+if rank_check > 0:
+    print(f"  Fail - {rank_check} instance(s) of duplicate ranks per timestamp")
+else:
+    print("  Pass - One rank per coin per timestamp — verified")
+
+
+
+# 2: Moving Average Completeness
+
+print("\n Check 2 - Moving Average Completeness")
+
+ma_nulls = df_perf.filter(F.col("moving_avg_price").isNull()).count()
+
+if ma_nulls > 0:
+    print(f"  Fail - {ma_nulls} record(s) missing moving average values")
+else:
+    print("pass — no null moving averages")
+
+
+
+# 3: Cross-Table Consistency
+
+print("\n Check 3 - Cross-Table Consistency")
+
+try:
+    snap_rows = df_snap.filter("coin_id = 'bitcoin'").select("price_usd").collect()
+    perf_rows = df_perf.filter("coin_id = 'bitcoin'").orderBy(F.col("event_timestamp").desc()).limit(1).select("price_usd").collect()
+
+    
+    if len(snap_rows) > 0 and len(perf_rows) > 0:
+        snap_price = snap_rows[0]["price_usd"]
+        perf_price = perf_rows[0]["price_usd"]
+
+        if abs(snap_price - perf_price) > 0.0001:
+            print(f" Fail - Snapshot (${round(snap_price, 4)}) and performance (${round(perf_price, 4)}) are out of sync")
+        else:
+            print(f"Pass - Tables are in sync — Bitcoin price: ${round(snap_price, 2)}")
+    else:
+        print("error — bitcoin not found in one of the tables, skipping sync check")
+
+except Exception as e:
+    print(f"error - Could not complete cross-table check: {e}")
+
+    
+
+
+print("gold validations completed")
+
+//gold checks 
+
+%sql
+-- gold layer validation queries
+-- checks latest snapshot, 24hr performance, and daily trends
+
+
+
+-- 1: Latest Snapshot Validation
+-- Shows the absolute latest metrics for all 16 tracked crypto assets
+
+
+WITH ranked_snapshots AS (
+    SELECT
+        coin_id,
+        price_usd,
+        market_cap,
+        volume_24h,
+        event_timestamp,
+        ROW_NUMBER() OVER (PARTITION BY coin_id ORDER BY event_timestamp DESC) as rn
+    FROM workspace.default.gold_latest_snapshot
+)
+SELECT 
+    coin_id,
+    ROUND(price_usd, 4) as price_usd,
+    ROUND(market_cap, 2) as market_cap_usd,
+    ROUND(volume_24h, 2) as volume_24h_usd,
+    event_timestamp
+FROM ranked_snapshots
+WHERE rn = 1
+ORDER BY market_cap_usd DESC;
+
+
+
+-- 2: Price Performance (Rolling Last 24 Hours)
+-- uses inline subquery instead of session variable for Databricks compatibility
+
+
+SELECT
+    event_timestamp,
+    coin_id,
+    ROUND(price_usd, 4) as price_usd,
+    ROUND(moving_avg_price, 4) as moving_avg_price_24h,
+    ROUND(price_volatility, 6) as price_volatility_index,
+    market_cap_rank
+FROM workspace.default.gold_price_performance
+WHERE event_timestamp >= (SELECT MAX(event_timestamp) FROM workspace.default.gold_price_performance) - INTERVAL 24 HOURS
+ORDER BY event_timestamp DESC, market_cap_rank ASC;
+
+
+
+-- 3: Daily Trends & Volume Quality Gates
+-- Aggregated chronological trends per coin 
+
+
+SELECT
+    date,
+    coin_id,
+    ROUND(daily_avg_price, 4) as daily_avg_price,
+    ROUND(daily_max_price, 4) as daily_max_price,
+    ROUND(daily_min_price, 4) as daily_min_price,
+    COUNT(*) as validation_ticks_sampled
+FROM workspace.default.gold_daily_trends
+GROUP BY date, coin_id, daily_avg_price, daily_max_price, daily_min_price
+ORDER BY date DESC, daily_avg_price DESC;
+
+
+
+
+
