@@ -19,7 +19,6 @@ except Exception as vault_err:
 
 BUCKET_NAME = "crypto-lakehouse-nehaa"
 BRONZE_PATH            = f"s3://{BUCKET_NAME}/bronze/*.json"
-PRODUCTION_SILVER_PATH = f"s3://{BUCKET_NAME}/silver/crypto_prices"
 CATALOG = "workspace"
 SCHEMA = "default"
 SILVER_TABLE = f"{CATALOG}.{SCHEMA}.silver_crypto_prices"
@@ -53,7 +52,13 @@ else:
 
 for coin in EXPECTED_COINS:
     if coin in all_columns:
-        select_exprs.append(F.col(f"`{coin}`"))
+        uniform_struct = F.struct(
+            F.col(f"`{coin}`.usd").cast("double").alias("usd"),
+            F.col(f"`{coin}`.usd_market_cap").cast("double").alias("usd_market_cap"),
+            F.col(f"`{coin}`.usd_24h_vol").cast("double").alias("usd_24h_vol"),
+            F.col(f"`{coin}`.last_updated_at").cast("long").alias("last_updated_at")
+        )
+        select_exprs.append(uniform_struct.alias(coin))
     else:
         null_struct = F.struct(
             F.lit(None).cast("double").alias("usd"),
@@ -108,6 +113,17 @@ df_metrics = df_transformed.withColumn(
     F.unix_timestamp(F.col("ingested_at")) - F.col("api_last_updated_at")
 )
 
+# Read table schema to check the pre-existing target datatype for schema alignment
+try:
+    existing_table_schema = spark.table(SILVER_TABLE).schema
+    target_type = next(field.dataType for field in existing_table_schema if field.name == "ingestion_delay_seconds")
+    df_metrics = df_metrics.withColumn("ingestion_delay_seconds", F.col("ingestion_delay_seconds").cast(target_type))
+    print(f"Schema match confirmed: casted ingestion_delay_seconds to existing type: {target_type.simpleString()}")
+except Exception:
+    # If table doesn't exist yet, default it to long safely
+    df_metrics = df_metrics.withColumn("ingestion_delay_seconds", F.col("ingestion_delay_seconds").cast("long"))
+
+
 price_window = Window.partitionBy("coin_id").orderBy("event_timestamp")
 
 df_flags = (
@@ -147,7 +163,6 @@ print("load timestamp added")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}")
 
 print(f"\n Writing to silver delta table: {SILVER_TABLE}")
-print(f"s3 path: {PRODUCTION_SILVER_PATH}")
 
 
 (
@@ -155,9 +170,6 @@ print(f"s3 path: {PRODUCTION_SILVER_PATH}")
     .format("delta")
     .mode("overwrite")
     .partitionBy("date")
-    .option("fs.s3.awsAccessKeyId", AWS_ACCESS_KEY)
-    .option("fs.s3.awsSecretAccessKey", AWS_SECRET_KEY)
-    .option("path", PRODUCTION_SILVER_PATH)  # write to S3 directly
     .option("mergeSchema", "true") 
     .saveAsTable(SILVER_TABLE)
 )
