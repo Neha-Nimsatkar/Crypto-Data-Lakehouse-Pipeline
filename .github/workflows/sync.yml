@@ -23,12 +23,28 @@ jobs:
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
-      # Step 2: Fire the single controller orchestration manager script
+     # Step 2: Fire the single controller orchestration manager script on real Serverless Compute
       - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          databricks labs sandbox run /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
+          databricks jobs submit --json '{
+            "tasks": [
+              {
+                "task_key": "crypto_orchestrator_task",
+                "spark_python_task": {
+                  "python_file": "/Workspace/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py"
+                },
+                "environment_key": "Serverless"
+              }
+            ],
+            "environments": [
+              {
+                "environment_key": "Serverless",
+                "spec": {
+                  "client": "serverless"
+                }
+              }
+            ]
+          }'
