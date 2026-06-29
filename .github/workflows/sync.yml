@@ -16,7 +16,7 @@ jobs:
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
 
-      # Step 1: Push everything over to the cloud environment workspace path
+      # Pushing everything over to the cloud environment workspace path
       - name: Upload Workspace Directories to Databricks
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
@@ -24,7 +24,7 @@ jobs:
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
 
-      # Step 2: Fire the single controller orchestration manager script
+      # Fire the single controller orchestration manager script
       - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
