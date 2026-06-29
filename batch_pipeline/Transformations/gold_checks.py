@@ -1,13 +1,10 @@
-%sql
--- gold layer validation queries
--- checks latest snapshot, 24hr performance, and daily trends
+# validates gold layer delta tables — ranking, moving averages, and cross-table sync
+# runs on Databricks with Unity Catalog
 
+print("running gold validation queries")
 
-
--- 1: Latest Snapshot Validation
--- Shows the absolute latest metrics for all 16 tracked crypto assets
-
-
+# 1: Latest Snapshot Validation
+spark.sql("""
 WITH ranked_snapshots AS (
     SELECT
         coin_id,
@@ -27,13 +24,10 @@ SELECT
 FROM ranked_snapshots
 WHERE rn = 1
 ORDER BY market_cap_usd DESC;
+""").show()
 
-
-
--- 2: Price Performance (Rolling Last 24 Hours)
--- uses inline subquery instead of session variable for Databricks compatibility
-
-
+# 2: Price Performance (Rolling Last 24 Hours)
+spark.sql("""
 SELECT
     event_timestamp,
     coin_id,
@@ -44,13 +38,10 @@ SELECT
 FROM workspace.default.gold_price_performance
 WHERE event_timestamp >= (SELECT MAX(event_timestamp) FROM workspace.default.gold_price_performance) - INTERVAL 24 HOURS
 ORDER BY event_timestamp DESC, market_cap_rank ASC;
+""").show()
 
-
-
--- 3: Daily Trends & Volume Quality Gates
--- Aggregated chronological trends per coin 
-
-
+# 3: Daily Trends & Volume Quality Gates
+spark.sql("""
 SELECT
     date,
     coin_id,
@@ -61,3 +52,6 @@ SELECT
 FROM workspace.default.gold_daily_trends
 GROUP BY date, coin_id, daily_avg_price, daily_max_price, daily_min_price
 ORDER BY date DESC, daily_avg_price DESC;
+""").show()
+
+print("gold validations completed")
