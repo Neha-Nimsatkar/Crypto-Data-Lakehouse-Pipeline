@@ -2,6 +2,12 @@ import os
 import sys
 import subprocess
 
+
+try:
+    from databricks.sdk.runtime import dbutils
+except ImportError:
+    pass
+..
 def run_script_via_cli(script_relative_path, aws_credentials):
     """Executes a Python file in a clean subprocess, passing AWS credentials forward."""
     base_dir = os.path.dirname(os.path.abspath(__file__))
