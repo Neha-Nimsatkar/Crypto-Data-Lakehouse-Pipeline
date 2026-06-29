@@ -35,7 +35,8 @@ jobs:
               {
                 "task_key": "crypto_orchestrator_task",
                 "spark_python_task": {
-                  "python_file": "/Workspace/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py"
+                  "python_file": "/Workspace/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py",
+                  "source": "WORKSPACE"
                 },
                 "environment_key": "crypto_serverless_env"
               }
@@ -44,7 +45,13 @@ jobs:
               {
                 "environment_key": "crypto_serverless_env",
                 "spec": {
-                  "environment_version": "3"
+                  "environment_version": "3",
+                  "dependencies": {
+                    "pip": [
+                      "requests",
+                      "boto3"
+                    ]
+                  }
                 }
               }
             ]
