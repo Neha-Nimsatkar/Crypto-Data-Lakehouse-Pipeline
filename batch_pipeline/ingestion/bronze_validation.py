@@ -1,5 +1,5 @@
-# performs quality and integrity checks on raw bronze layer data
-# ingested from CoinGecko API into AWS S3
+# performs quality and integrity checks on raw, unflattened bronze layer data
+# ingested from Kafka stream into AWS S3
 # acts as a quality gate before data moves to the silver layer
 
 import os
@@ -23,28 +23,24 @@ except Exception:
     BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 
 EXPECTED_COINS = [
-    "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
-    "polkadot", "polygon-ecosystem-token", "shiba-inu", "avalanche-2", "chainlink",
+    "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin", 
+    "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink", 
     "uniswap", "litecoin", "stellar", "near"
 ]
-EXPECTED_KEYS = EXPECTED_COINS + ["ingestion_metadata"]
 
 BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
 
 
 
-print("loading bronze data from S3...")
+print("loading unflattened bronze records from S3...")
 
 try:
-    df_bronze = (spark.read
-                 .option("multiLine", "true")
-                 .option("fs.s3.awsAccessKeyId", aws_access_key)
-                 .option("fs.s3.awsSecretAccessKey", aws_secret_key)
-                 .json(BRONZE_PATH))
-    actual_keys = df_bronze.columns
-    print("data loaded from S3")
+    # Read as text first to avoid Spark misinterpreting the line formats
+    df_raw = spark.read.text(BRONZE_PATH)
+    total_records = df_raw.count()
+    print(f"data loaded. total raw records found: {total_records}")
 except Exception as e:
-    print(f"failed to load data: {e}")
+    print(f"failed to load data from S3: {e}")
     raise e
 
 
@@ -52,77 +48,66 @@ except Exception as e:
 print("running bronze validation checks")
 
 
-# check 1 - json integrity
-total_raw = df_bronze.count()
-print(f"check 1 — total records: {total_raw}")
-
-if "_corrupt_record" in actual_keys:
-    corrupt_count = df_bronze.filter(F.col("_corrupt_record").isNotNull()).count()
-    if corrupt_count > 0:
-        print(f"fail — {corrupt_count} corrupt records found, stopping run")
-        sys.exit(1)
-    else:
-        print("pass — no corrupt records found")
-else:
-    print("pass — no corrupt records found")
-
-
-# check 2 - schema
-print("\ncheck 2 — schema")
-
-missing_keys = [c for c in EXPECTED_KEYS if c not in actual_keys]
-extra_keys = [c for c in actual_keys if c not in EXPECTED_KEYS and c != "_corrupt_record"]
-
-if missing_keys:
-    print(f"fail — missing keys: {missing_keys}")
+# check 1 - empty file check
+if total_records == 0:
+    print("fail — S3 directory contains no records to validate.")
     sys.exit(1)
 else:
-    print("pass — all 15 expected keys present")
-
-if extra_keys:
-    print(f"warning — extra fields found: {extra_keys}")
+    print("pass — raw records are present")
 
 
-# check 3 - completeness
-print("\ncheck 3 — null prices per coin")
-
-for coin in EXPECTED_COINS:
-    if coin in actual_keys:
-        null_price = df_bronze.filter(F.col(f"`{coin}`.usd").isNull()).count()
-        if null_price > 0:
-            print(f"fail — {coin} has {null_price} null prices")
-        else:
-            print(f"pass — {coin} looks clean")
-
-
-# check 4 - metadata
-print("\ncheck 4 — metadata")
-
-if "ingestion_metadata" in actual_keys:
-    invalid_meta = df_bronze.filter(
-        F.col("ingestion_metadata.ingested_at").isNull() |
-        (F.col("ingestion_metadata.ingested_at") == "")
-    ).count()
-
-    if invalid_meta > 0:
-        print(f"fail — {invalid_meta} records missing timestamp, stopping run")
-        sys.exit(1)
-    else:
-        print("pass — metadata looks good")
-else:
-    print("fail — ingestion_metadata column missing entirely")
-    sys.exit(1)
-
-
-# check 5 - freshness
-print("\ncheck 5 — freshness")
-
+# Parse the text string columns dynamically so we can look inside them without modifying the base file
+print("\nParsing raw payloads for schema validation...")
 try:
-    latest_ingestion = df_bronze.select(
-        F.max("ingestion_metadata.ingested_at")
-    ).collect()[0][0]
-    print(f"latest ingestion timestamp: {latest_ingestion}")
+    # Read the text rows back as a JSON dataset to infer the internal stream fields
+    df_parsed = spark.read.json(df_raw.rdd.map(lambda r: r.value))
+    parsed_cols = df_parsed.columns
 except Exception as e:
-    print(f"fail — could not read latest timestamp: {e}")
+    print(f"fail — raw text rows are not valid JSON strings: {e}")
+    sys.exit(1)
 
-print("all checks passed")
+
+# check 2 — structural check
+print("\ncheck 2 — structural check")
+expected_fields = ["symbol", "price", "volume", "timestamp"]
+missing_fields = [f for f in expected_fields if f not in parsed_cols]
+
+if missing_fields:
+    print(f"fail — stream schema is broken. missing internal payload fields: {missing_fields}")
+    sys.exit(1)
+else:
+    print("pass — all structural streaming payload fields exist")
+
+
+# check 3 — asset tracking check
+print("\ncheck 3 — asset tracking check")
+# Extract all the distinct string values from the parsed 'symbol' field
+unique_symbols_in_batch = [row["symbol"] for row in df_parsed.select("symbol").distinct().collect() if row["symbol"] is not None]
+missing_coins = [coin for coin in EXPECTED_COINS if coin not in unique_symbols_in_batch]
+
+if missing_coins:
+    print(f"warning — the following assets were missing from this streaming chunk: {missing_coins}")
+else:
+    print(f"pass — tracking integrity verified. all {len(EXPECTED_COINS)} assets found in stream rows")
+
+
+# check 4 — null values check
+print("\ncheck 4 — data quality gates")
+null_ticks = df_parsed.filter(F.col("price").isNull() | F.col("symbol").isNull()).count()
+
+if null_ticks > 0:
+    print(f"fail — detected {null_ticks} records with corrupt null values inside payload")
+    sys.exit(1)
+else:
+    print("pass — zero null metrics found inside payload strings")
+
+
+# check 5 - freshness check
+print("\ncheck 5 — freshness check")
+try:
+    latest_epoch = df_parsed.select(F.max("timestamp")).collect()[0][0]
+    print(f"latest streaming event timestamp found: {latest_epoch}")
+except Exception as e:
+    print(f"fail — could not parse timestamp metric: {e}")
+
+print("all unflattened bronze quality checks completed successfully")
