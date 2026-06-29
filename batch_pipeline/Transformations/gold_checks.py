@@ -1,17 +1,13 @@
 
 %sql
-/**
- * File        : gold_checks.sql
- * Location    : batch_pipeline/medallion/gold/
- * Description : Production SQL queries to visually inspect and verify the three Gold layer
- * Delta tables after transformation. Run inside Databricks notebooks.
- * Handles active scaling across 16 crypto assets with performance optimization guards.
- */
+-- gold layer validation queries
+-- checks latest snapshot, 24hr performance, and daily trends
 
--- ==============================================================================
--- Query 1: Latest Snapshot Validation
+
+
+-- 1: Latest Snapshot Validation
 -- Shows the absolute latest metrics for all 16 tracked crypto assets
--- ==============================================================================
+
 
 WITH ranked_snapshots AS (
     SELECT
@@ -34,10 +30,10 @@ WHERE rn = 1
 ORDER BY market_cap_usd DESC;
 
 
--- ==============================================================================
--- Query 2: Price Performance (Rolling Last 24 Hours)
--- Production Fix: Replaced explicit session variables with an inline scalar subquery
--- ==============================================================================
+
+-- 2: Price Performance (Rolling Last 24 Hours)
+-- uses inline subquery instead of session variable for Databricks compatibility
+
 
 SELECT
     event_timestamp,
@@ -51,10 +47,10 @@ WHERE event_timestamp >= (SELECT MAX(event_timestamp) FROM workspace.default.gol
 ORDER BY event_timestamp DESC, market_cap_rank ASC;
 
 
--- ==============================================================================
--- Query 3: Daily Trends & Volume Quality Gates
+
+-- 3: Daily Trends & Volume Quality Gates
 -- Aggregated chronological trends per coin 
--- ==============================================================================
+
 
 SELECT
     date,

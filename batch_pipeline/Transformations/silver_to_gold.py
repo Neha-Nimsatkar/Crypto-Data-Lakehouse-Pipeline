@@ -1,41 +1,36 @@
 # Transforms Silver layer data into three Gold layer Delta tables 
-#optimised for business intelligence and analytics consumption.
+# optimised for business intelligence and analytics consumption.
 
 
 
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
-# ==============================================================================
-# Configuration & Secure External Paths
-# ==============================================================================
-BUCKET_NAME        = "crypto-lakehouse-nehaa"
 
-SILVER_TABLE       = "workspace.default.silver_crypto_prices"
-GOLD_SNAPSHOT      = "workspace.default.gold_latest_snapshot"
-GOLD_PERFORMANCE   = "workspace.default.gold_price_performance"
-GOLD_DAILY_TRENDS  = "workspace.default.gold_daily_trends"
+BUCKET_NAME = "crypto-lakehouse-nehaa"
 
-# Explicit paths enforcing direct S3 target destination handshake
-PATH_GOLD_SNAPSHOT    = f"s3://{BUCKET_NAME}/gold/latest_snapshot"
+SILVER_TABLE = "workspace.default.silver_crypto_prices"
+GOLD_SNAPSHOT = "workspace.default.gold_latest_snapshot"
+GOLD_PERFORMANCE = "workspace.default.gold_price_performance"
+GOLD_DAILY_TRENDS = "workspace.default.gold_daily_trends"
+
+
+PATH_GOLD_SNAPSHOT = f"s3://{BUCKET_NAME}/gold/latest_snapshot"
 PATH_GOLD_PERFORMANCE = f"s3://{BUCKET_NAME}/gold/price_performance"
 PATH_GOLD_DAILY_TRENDS = f"s3://{BUCKET_NAME}/gold/daily_trends"
 
-MOVING_AVG_WINDOW  = 7
+MOVING_AVG_WINDOW = 7
 
-# ==============================================================================
-# Load Silver Data 
-# ==============================================================================
 df_silver = spark.read.table(SILVER_TABLE)
 
-print("=" * 60)
-print("  GOLD LAYER: PRODUCTION TRANSFORMATIONS (16 COINS CORE METRICS)")
-print("=" * 60)
 
-# ==============================================================================
+print("gold layer transformation begins..")
+
+
+
 # Table 1: Latest Snapshot
-# ==============================================================================
-print("\n[TABLE 1] Building gold_latest_snapshot...")
+
+print("\n Table 1 - Building gold_latest_snapshot...")
 
 latest_window = Window.partitionBy("coin_id").orderBy(F.col("event_timestamp").desc())
 
@@ -52,8 +47,6 @@ df_snapshot = (
         "event_timestamp"
     )
 )
-
-# Overriding metadata route with explicit clean storage location path
 (
     df_snapshot.write
     .format("delta")
@@ -62,15 +55,15 @@ df_snapshot = (
     .option("mergeSchema", "true")
     .saveAsTable(GOLD_SNAPSHOT)
 )
-print(f"  DONE     : Dynamic Snapshot Matrix written to {GOLD_SNAPSHOT}")
+print(f"written to {GOLD_SNAPSHOT}")
 
 
-# ==============================================================================
+
 # Table 2: Price Performance
-# ==============================================================================
-print("\n[TABLE 2] Building gold_price_performance...")
 
-perf_window    = Window.partitionBy("coin_id").orderBy("event_timestamp").rowsBetween(-(MOVING_AVG_WINDOW - 1), 0)
+print("\n Table 2 - Building gold_price_performance...")
+
+perf_window = Window.partitionBy("coin_id").orderBy("event_timestamp").rowsBetween(-(MOVING_AVG_WINDOW - 1), 0)
 ranking_window = Window.partitionBy("event_timestamp").orderBy(F.col("market_cap").desc())
 
 df_performance = (
@@ -88,11 +81,9 @@ df_performance = (
         F.round("moving_avg_price", 4).alias("moving_avg_price"),
         F.round("price_volatility", 6).alias("price_volatility"), 
         "market_cap_rank",
-        "date" 
+        "date"
     )
 )
-
-# Overriding metadata route with explicit clean partitioned storage route
 (
     df_performance.write
     .format("delta")
@@ -102,13 +93,14 @@ df_performance = (
     .option("mergeSchema", "true")
     .saveAsTable(GOLD_PERFORMANCE)
 )
-print(f"  DONE     : Volatility and Rolling performance written to {GOLD_PERFORMANCE}")
+print(f" written to {GOLD_PERFORMANCE}")
 
 
-# ==============================================================================
+
+
 # Table 3: Daily Trends
-# ==============================================================================
-print("\n[TABLE 3] Building gold_daily_trends...")
+
+print("\n Table 3 - Building gold_daily_trends...")
 
 df_daily = (
     df_silver
@@ -122,8 +114,6 @@ df_daily = (
     )
     .orderBy(F.col("date").desc(), F.col("daily_avg_price").desc())
 )
-
-# Overriding table metadata path configuration
 (
     df_daily.write
     .format("delta")
@@ -133,11 +123,12 @@ df_daily = (
     .option("mergeSchema", "true")
     .saveAsTable(GOLD_DAILY_TRENDS)
 )
-print(f"  DONE     : Chronological Daily Aggregates written to {GOLD_DAILY_TRENDS}")
+print(f" written to {GOLD_DAILY_TRENDS}")
 
-print("\n" + "=" * 60)
-print("  GOLD TRANSFORMATIONS COMPLETE")
-print("=" * 60)
+
+
+print("gold transformations completed..")
+
 
 
 
