@@ -22,12 +22,6 @@ except Exception:
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
     BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 
-if aws_access_key and aws_secret_key:
-    sc = spark.sparkContext
-    sc._jsc.hadoopConfiguration().set("fs.s3a.access.key", aws_access_key)
-    sc._jsc.hadoopConfiguration().set("fs.s3a.secret.key", aws_secret_key)
-    sc._jsc.hadoopConfiguration().set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-
 EXPECTED_COINS = [
     "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
     "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink",
@@ -35,14 +29,18 @@ EXPECTED_COINS = [
 ]
 EXPECTED_KEYS = EXPECTED_COINS + ["ingestion_metadata"]
 
-BRONZE_PATH = f"s3a://{BUCKET_NAME}/bronze/*.json"
+BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
 
 
 
 print("loading bronze data from S3...")
 
 try:
-    df_bronze = spark.read.option("multiLine", "true").json(BRONZE_PATH)
+    df_bronze = (spark.read
+                 .option("multiLine", "true")
+                 .option("fs.s3.awsAccessKeyId", aws_access_key)
+                 .option("fs.s3.awsSecretAccessKey", aws_secret_key)
+                 .json(BRONZE_PATH))
     actual_keys = df_bronze.columns
     print("data loaded from S3")
 except Exception as e:
