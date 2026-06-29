@@ -1,13 +1,7 @@
-"""
-File        : gold_transformations.py
-Location    : batch_pipeline/medallion/gold/
-Description : Transforms Silver layer data into three Gold layer Delta tables
-              optimised for business intelligence and analytics consumption.
-              Fully productionised to scale across 16+ active cryptocurrencies.
+# Transforms Silver layer data into three Gold layer Delta tables 
+#optimised for business intelligence and analytics consumption.
 
-Input       : Databricks table — workspace.default.silver_crypto_prices
-Output      : Three optimized external Gold tables mapping direct to target S3 directories
-"""
+
 
 from pyspark.sql import functions as F
 from pyspark.sql.window import Window
