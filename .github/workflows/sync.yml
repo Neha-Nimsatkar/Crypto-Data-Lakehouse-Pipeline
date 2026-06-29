@@ -16,16 +16,14 @@ jobs:
       - name: Setup Databricks Automation CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
-      # Pushing everything over to the cloud environment workspace path
+      # Step 1: Push everything over to the cloud environment workspace path
       - name: Upload Workspace Directories to Databricks
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
-
-      # Fire the single controller orchestration manager script remotely on Serverless Compute
+      # Step 2: Fire the single controller orchestration manager script
       - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
@@ -33,14 +31,4 @@ jobs:
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          databricks jobs submit --json '{
-            "run_name": "Crypto Data Lakehouse Sequencer Run",
-            "tasks": [
-              {
-                "task_key": "orchestrator_execution",
-                "spark_python_task": {
-                  "python_file": "/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py"
-                }
-              }
-            ]
-          }'
+          databricks labs sandbox run /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
