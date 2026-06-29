@@ -25,11 +25,22 @@ jobs:
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
 
-      # Fire the single controller orchestration manager script remotely on Databricks
+      # Fire the single controller orchestration manager script remotely on Serverless Compute
       - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         run: |
-          # This is the modern official way to run workspace scripts directly in the cloud!
-          databricks workspace execute /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
+          databricks jobs submit --json '{
+            "run_name": "Crypto Data Lakehouse Sequencer Run",
+            "tasks": [
+              {
+                "task_key": "orchestrator_execution",
+                "spark_python_task": {
+                  "python_file": "/Users/1492neha@gmail.com/batch_pipeline/orchestrator.py"
+                }
+              }
+            ]
+          }'
