@@ -1,4 +1,4 @@
-# performs quality and integrity checks on raw, unflattened bronze layer data
+# performs quality and integrity checks on raw bronze layer data
 # ingested from Kafka stream into AWS S3
 # acts as a quality gate before data moves to the silver layer
 
@@ -22,6 +22,7 @@ except Exception:
     aws_secret_key = os.getenv("AWS_SECRET_ACCESS_KEY")
     BUCKET_NAME = os.getenv("S3_BUCKET_NAME", "crypto-lakehouse-nehaa")
 
+# Match the exact 15 coins from your producer code
 EXPECTED_COINS = [
     "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin", 
     "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink", 
@@ -32,14 +33,19 @@ BRONZE_PATH = f"s3://{BUCKET_NAME}/bronze/*.json"
 
 
 
-print("loading unflattened bronze records from S3...")
+print("loading bronze data from S3 using multiLine JSON reader...")
 
 try:
-    df_raw = spark.read.text(BRONZE_PATH)
-    total_records = df_raw.count()
-    print(f"data loaded. total raw records found: {total_records}")
+    # Use multiLine=true since the JSON files contain pretty-printed multi-line formatting
+    df_bronze = (spark.read
+                 .option("multiLine", "true")
+                 .option("fs.s3.awsAccessKeyId", aws_access_key)
+                 .option("fs.s3.awsSecretAccessKey", aws_secret_key)
+                 .json(BRONZE_PATH))
+    actual_cols = df_bronze.columns
+    print("data loaded successfully from S3")
 except Exception as e:
-    print(f"failed to load data from S3: {e}")
+    print(f"failed to load data: {e}")
     raise e
 
 
@@ -47,84 +53,61 @@ except Exception as e:
 print("running bronze validation checks")
 
 
-# check 1 - empty file check
-if total_records == 0:
-    print("fail — S3 directory contains no records to validate.")
+# check 1 - json integrity
+total_raw = df_bronze.count()
+print(f"check 1 — total records: {total_raw}")
+
+if "_corrupt_record" in actual_cols:
+    corrupt_count = df_bronze.filter(F.col("_corrupt_record").isNotNull()).count()
+    if corrupt_count > 0:
+        print(f"fail — {corrupt_count} corrupt records found, stopping run")
+        sys.exit(1)
+    else:
+        print("pass — no corrupt records found")
+else:
+    print("pass — no corrupt records found")
+
+
+# check 2 — structural schema check
+print("\ncheck 2 — structural schema check")
+expected_schema_cols = ["symbol", "price", "volume", "timestamp"]
+missing_cols = [c for c in expected_schema_cols if c not in actual_cols]
+
+if missing_cols:
+    print(f"fail — missing core structural columns in dataset: {missing_cols}")
     sys.exit(1)
 else:
-    print("pass — raw records are present")
+    print("pass — core streaming schema columns verified (symbol, price, volume, timestamp)")
 
 
-# ─── DEBUG STEP: PRINT RAW ROW STRUCTURE ──────────────────────────────────
-print("\n[DEBUG] Printing the first raw record from S3 to inspect structure:")
-try:
-    sample_row = df_raw.limit(1).collect()[0]["value"]
-    print(f"Sample Content: {sample_row}")
-except Exception as debug_err:
-    print(f"Could not read sample row: {debug_err}")
-# ──────────────────────────────────────────────────────────────────────────
-
-
-print("\nExtracting metrics for schema validation...")
-# Try extracting directly from root or from a standard Kafka wrapper payload
-df_parsed = df_raw.select(
-    F.coalesce(
-        F.get_json_object(F.col("value"), "$.symbol"),
-        F.get_json_object(F.col("value"), "$.payload.symbol")
-    ).alias("symbol"),
-    F.coalesce(
-        F.get_json_object(F.col("value"), "$.price"),
-        F.get_json_object(F.col("value"), "$.payload.price")
-    ).alias("price"),
-    F.coalesce(
-        F.get_json_object(F.col("value"), "$.volume"),
-        F.get_json_object(F.col("value"), "$.payload.volume")
-    ).alias("volume"),
-    F.coalesce(
-        F.get_json_object(F.col("value"), "$.timestamp"),
-        F.get_json_object(F.col("value"), "$.payload.timestamp")
-    ).alias("timestamp")
-)
-
-
-# check 2 — structural check
-print("\ncheck 2 — structural check")
-valid_structural_counts = df_parsed.filter(F.col("symbol").isNotNull()).count()
-
-if valid_structural_counts == 0:
-    print("fail — stream schema is broken. structural streaming payload keys do not exist in the json strings")
-    sys.exit(1)
-else:
-    print(f"pass — structural streaming payload fields verified ({valid_structural_counts} valid structural ticks)")
-
-
-# check 3 — asset tracking check
+# check 3 — asset tracking check (checking row values)
 print("\ncheck 3 — asset tracking check")
-unique_symbols_in_batch = [row["symbol"] for row in df_parsed.select("symbol").distinct().collect() if row["symbol"] is not None]
-missing_coins = [coin for coin in EXPECTED_COINS if coin not in unique_symbols_in_batch]
+distinct_coins_in_data = [row["symbol"] for row in df_bronze.select("symbol").distinct().collect() if row["symbol"] is not None]
+missing_coins = [coin for coin in EXPECTED_COINS if coin not in distinct_coins_in_data]
 
 if missing_coins:
-    print(f"warning — the following assets were missing from this streaming chunk: {missing_coins}")
+    print(f"warning — some expected assets are missing from this batch window: {missing_coins}")
 else:
-    print(f"pass — tracking integrity verified. all {len(EXPECTED_COINS)} assets found in stream rows")
+    print(f"pass — tracking integrity verified. all {len(EXPECTED_COINS)} assets are present in the dataset rows")
 
 
 # check 4 — null values check
 print("\ncheck 4 — data quality gates")
-null_ticks = df_parsed.filter(F.col("price").isNull() | F.col("symbol").isNull()).count()
+null_prices = df_bronze.filter(F.col("price").isNull() | F.col("symbol").isNull()).count()
 
-if null_ticks > 0:
-    print(f"warning — detected {null_ticks} records with missing metric values inside batch window")
+if null_prices > 0:
+    print(f"fail — found {null_prices} rows with null values")
+    sys.exit(1)
 else:
-    print("pass — zero null metrics found inside payload strings")
+    print("pass — zero null metrics detected in dataset values")
 
 
 # check 5 - freshness check
 print("\ncheck 5 — freshness check")
 try:
-    latest_epoch = df_parsed.select(F.max("timestamp")).collect()[0][0]
-    print(f"latest streaming event timestamp found: {latest_epoch}")
+    latest_timestamp_ms = df_bronze.select(F.max("timestamp")).collect()[0][0]
+    print(f"latest ingestion stream epoch timestamp: {latest_timestamp_ms}")
 except Exception as e:
-    print(f"fail — could not parse timestamp metric: {e}")
+    print(f"fail — could not read latest stream timestamp: {e}")
 
-print("all unflattened bronze quality checks completed successfully")
+print("all bronze quality checks completed successfully")
