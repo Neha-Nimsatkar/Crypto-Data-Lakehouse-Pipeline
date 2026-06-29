@@ -25,14 +25,11 @@ jobs:
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
 
-     # Fire the single controller orchestration manager script locally on the runner
+      # Fire the single controller orchestration manager script remotely on Databricks
       - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        working-directory: ./batch_pipeline
         run: |
-          pip install databricks-sdk
-          python orchestrator.py
+          # This is the modern official way to run workspace scripts directly in the cloud!
+          databricks workspace execute /Users/1492neha@gmail.com/batch_pipeline/orchestrator.py
