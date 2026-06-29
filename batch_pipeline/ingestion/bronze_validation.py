@@ -24,7 +24,7 @@ except Exception:
 
 EXPECTED_COINS = [
     "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
-    "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink",
+    "polkadot", "matic-network", "shiba-inu", "avalanche-2", "chainlink",
     "uniswap", "litecoin", "stellar", "near"
 ]
 EXPECTED_KEYS = EXPECTED_COINS + ["ingestion_metadata"]
