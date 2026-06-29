@@ -1,4 +1,4 @@
-name: crypto lakehouse pipeline
+name: Databricks Code Deployment and Automated Execution Pipeline
 
 on:
   push:
@@ -10,21 +10,21 @@ jobs:
   deploy-and-run:
     runs-on: ubuntu-latest
     steps:
-      - name: checkout code
+      - name: Checkout Repository Source Code
         uses: actions/checkout@v4
 
-      - name: setup Databricks CLI
+      - name: Setup Databricks Automation CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
-
-      - name: upload batch pipeline to Databricks
+      # Step 1: Push everything over to the cloud environment workspace path
+      - name: Upload Workspace Directories to Databricks
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
         run: |
           databricks workspace import-dir ./batch_pipeline /Users/1492neha@gmail.com/batch_pipeline --overwrite
-
-      - name: run orchestrator
+      # Step 2: Fire the single controller orchestration manager script
+      - name: Trigger Master Pipeline Sequence Remotely
         env:
           DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
