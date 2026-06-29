@@ -32,6 +32,7 @@ jobs:
           DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
           AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        working-directory: ./batch_pipeline
         run: |
           pip install databricks-sdk
-          python ./batch_pipeline/orchestrator.py
+          python orchestrator.py
