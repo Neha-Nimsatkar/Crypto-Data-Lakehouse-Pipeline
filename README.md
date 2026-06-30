@@ -8,23 +8,26 @@ The project follows the **Medallion Architecture (Bronze → Silver → Gold)** 
 
 ## Architecture Overview
 
-This lakehouse unifies two distinct processing paradigms under a single storage and governance layer:
+This lakehouse unifies two distinct processing paradigms under a single cloud storage and governance layer:
 
 ```
-[ Batch Ingestion ] ----> CoinGecko API ----> Databricks Job (Hourly) ---                                                                          +--> [ Medallion Layers ] --> AWS S3 (Delta Lake)
+[ Batch Ingestion ] ----> CoinGecko API ----> Databricks Job (Hourly) ---\
+                                                                          +--> [ Medallion Layers ] --> AWS S3 (Delta Lake)
 [ Streaming Ingestion ] -> Kafka Producer -> Confluent Cloud Kafka ------/     (Bronze -> Silver -> Gold)
 ```
 
-Detailed visual breakdowns of the flows can be found in the documentation directory:
-* **Overall System Layout:** `docs/architecture/01_overall_architecture.png`
-* **Medallion Data Boundaries:** `docs/architecture/02_medallion_layers.png`
+### Overall System Layout
+![Overall System Layout](docs/architecture/01_overall_architecture.png)
+
+### Medallion Data Boundaries
+![Medallion Data Boundaries](docs/architecture/02_medallion_layers.png)
 
 <br>
 <br>
 
 ## Project Structure
 
-The repository is structured to separate the two independent processing pipelines while sharing unified documentation and schema design definitions:
+The repository isolates the two independent processing pipelines while sharing unified system documentation and data definitions:
 
 ```
 Crypto-Data-Lakehouse-Pipeline/
@@ -49,24 +52,28 @@ Crypto-Data-Lakehouse-Pipeline/
 <br>
 <br>
 
-## Pipeline Mechanics
+## Pipeline Mechanics & Data Flows
 
 ### 1. Batch Pipeline (`/batch_pipeline`)
 * **Ingestion:** Fetches structured JSON snapshots from the CoinGecko API at regular intervals (`crypto_api_fetch.py`).
-* **Processing Flow:** Data paths move sequentially from raw JSON captures down to structured analytical representations (`docs/architecture/04_batch_flow.png`).
+* **Processing Flow:** Data paths move sequentially from raw JSON captures down to structured analytical representations.
 * **Orchestration:** Scheduled via Databricks Workflows, running a 7-task linear dependency chain.
+
+![Batch Flow](docs/architecture/04_batch_flow.png)
 
 ### 2. Streaming Pipeline (`/streaming_pipeline`)
 * **Ingestion:** A custom mock producer simulates real-time price changes within a $\pm1\%$ variance baseline and streams records to Confluent Cloud Kafka topics at 5-second intervals.
-* **Processing Flow:** Structured Streaming jobs process available records using micro-batches (`docs/architecture/03_streaming_flow.png`).
+* **Processing Flow:** Structured Streaming jobs process available records using micro-batches.
 * **Execution Strategy:** Configured with PySpark's `.trigger(availableNow=True)` setting. This provides the architectural benefits of streaming (state management, checkpointing, event-time processing) with the cost efficiency of batch execution profiles.
+
+![Streaming Flow](docs/architecture/03_streaming_flow.png)
 
 <br>
 <br>
 
 ## Core Medallion Design
 
-Both pipelines isolate data transformation phases to guarantee balance between raw auditability and optimized analytical performance:
+Both pipelines isolate data transformation phases to guarantee a clean balance between raw auditability and optimized analytical performance:
 
 | Layer | Implementation Details | Purpose |
 | :--- | :--- | :--- |
@@ -88,27 +95,27 @@ Data cannot progress to downstream layers unless it passes strict, automated val
 <br>
 <br>
 
-## CI/CD & Deployment Model
+## CI/CD Deployment Sync
 
-Code distribution handles deployment seamlessly without continuous manual file staging:
+Code distribution handles deployment seamlessly across environments without continuous manual file staging via dedicated GitHub Actions workflows:
 
 ```
 Developer Push → GitHub Repository → GitHub Actions Workflow → Databricks Git Volumes Sync → Jobs API Trigger
 ```
 
-1. Local adjustments are committed and pushed to the `main` branch on GitHub.
-2. Targeted workflows (`sync_batch.yml` or `sync_streaming.yml`) catch code alterations.
-3. The automated step targets your designated Databricks workspace Git folder over secure API integrations.
-4. Updates roll out immediately, and execution jobs kick off automatically across the lakehouse clusters.
+* **`sync_batch.yml`:** Catches any code modifications made inside the `/batch_pipeline` directory. It handles the authorization handshake with your Databricks workspace using stored GitHub Secrets (Host URL and Personal Access Token) to sync the latest assets directly into a Databricks Git folder. Once staged, it hits the Databricks Jobs API to trigger the batch pipeline.
+* **`sync_streaming.yml`:** Monitors alterations inside the `/streaming_pipeline` directory. It utilizes the same tokenized authorization flow to update the streaming source files and automatically run the chained streaming tasks.
 
 <br>
 <br>
 
-## Security, Secret Management & Compute
+## Infrastructure Connections & Secret Handshakes
 
-* **Secret Management:** Critical connection details, database targets, and Confluent Cloud API keys are handled cleanly via Databricks Secrets Scopes (`crypto-pipeline-secrets`). No plain-text variables are exposed in source tracking.
-* **Storage Abstraction:** File access routing relies on structured Unity Catalog Volumes instead of direct, legacy DBFS structures for secure, isolated cloud storage paths.
-* **Compute Footprint:** Configured to execute entirely over cost-efficient, temporary serverless compute setups or single-node clusters on the Databricks Free / Community Tier ecosystem.
+To eliminate hardcoded credentials completely, the lakehouse relies on a secure cloud handshake mesh across all moving parts:
+
+* **Kafka Connection Handshake:** The real-time streaming workers read configurations from a gitignored `client.properties` setup locally. When running on Databricks, the authentication details are securely pulled out of the `crypto-pipeline-secrets` secret scope to connect to Confluent Cloud Kafka topics.
+* **AWS S3 Storage Handshake:** Access to target S3 storage buckets is authenticated natively via structured Unity Catalog storage connections and cloud credentials configured in Databricks, fallback-supported by local environment variables for isolated testing.
+* **Compute Profiles:** Pipelines are lightweight and fully optimized to execute entirely over cost-efficient, temporary serverless compute setups or single-node clusters on the Databricks Free / Community Tier ecosystem.
 
 ---
 
