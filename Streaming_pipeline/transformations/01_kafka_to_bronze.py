@@ -32,7 +32,7 @@ kafka_df = (spark.readStream
     .format("kafka")
     .option("kafka.bootstrap.servers", BOOTSTRAP_SERVER)
     .option("subscribe", TOPIC_NAME)
-    .option("startingOffsets", "latest")
+    .option("startingOffsets", "earliest")
     
     # Serverless Shaded Core Protocols Handshake Settings
     .option("kafka.security.protocol", "SASL_SSL")
