@@ -9,6 +9,7 @@ __pycache__/
 .env
 .venv
 venv/
+*.credentials
 
 # Logs
 logs/
@@ -30,14 +31,10 @@ airflow.cfg
 airflow-webserver.pid
 webserver_config.py
 
-# Astro
-astro
 
 # OS files
 .DS_Store
 Thumbs.db
-New Volume*.lnk
-*.lnk
 
 # IDE
 .vscode/
@@ -47,7 +44,5 @@ New Volume*.lnk
 *.class
 *.jar
 
-
-.env
-*.credentials
+# Project secrets
 Streaming_pipeline/ingestion/client.properties

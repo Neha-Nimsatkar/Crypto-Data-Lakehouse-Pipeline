@@ -1,6 +1,6 @@
-# Real-Time Stream from Bronze to Silver (Fixed Parsing Syntax)
-# medallion architecture bronze to silver layer transformation
-# data stored to databricks volume
+# bronze to silver: cleans up raw ticks, adds validation + dedup, casts types properly
+# second hop in the medallion setup
+# writes out to the silver volume as a delta table
 
 
 from pyspark.sql.functions import col, from_unixtime, to_timestamp, to_date, hour, current_timestamp, lit
@@ -10,7 +10,7 @@ BITCOIN_PRICE_MIN = 10000
 BITCOIN_PRICE_MAX = 250000
 
 streaming_bronze_df = spark.readStream.table("workspace.default.crypto_bronze_table")
-print(" Starting Transformations...").
+print("kicking off the transforms...")
 
 
 validated_bronze_df = streaming_bronze_df.filter(
@@ -54,4 +54,4 @@ query_silver = df_final.writeStream \
 
 query_silver.awaitTermination()
 
-print(" Bronze to Silver Layer Transformations completed")
+print("silver layer write finished")

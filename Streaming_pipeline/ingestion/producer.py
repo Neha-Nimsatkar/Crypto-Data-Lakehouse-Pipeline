@@ -1,4 +1,4 @@
-#Fetches near real time cryptocurrency data from CoinGecko api 
+# simulates near-real-time crypto ticks (based on CoinGecko baseline prices) and pushes them to kafka
 
 import json
 import time
@@ -12,7 +12,7 @@ EXPECTED_COINS = [
     "uniswap", "litecoin", "stellar", "near"
 ]
 
-# baseline prices used to simulate realistic price movement
+# rough baseline prices, just so the random walk starts somewhere sane
 BASE_PRICES = {
     "bitcoin": 65000.0, "ethereum": 3500.0, "solana": 140.0, "ripple": 0.50,
     "cardano": 0.45, "dogecoin": 0.12, "polkadot": 6.50, "polygon": 0.65,
@@ -42,7 +42,7 @@ def read_config():
         return config
 
     except Exception:
-        print("dbutils not available, falling back to local client.properties")
+        print("no dbutils here, guess we're local. reading client.properties instead")
         config = {}
         with open("client.properties") as fh:
             for line in fh:
@@ -58,7 +58,7 @@ def delivery_report(err, msg):
         print(f"delivery failed: {err}")
     else:
         coin_key = msg.key().decode('utf-8') if msg.key() else "unknown"
-        print(f"sent — {coin_key:<12} partition: {msg.partition()}")
+        print(f"sent {coin_key} -> partition {msg.partition()}")
 
 
 def produce_crypto_stream(topic, config):
@@ -90,15 +90,15 @@ def produce_crypto_stream(topic, config):
                 )
 
             producer.flush()
-            print(f"batch sent at {current_epoch}, sleeping 5s\n")
+            print(f"batch done @ {current_epoch}, sleeping 5s...")
             time.sleep(5)
 
     except KeyboardInterrupt:
-        print("\nstopped by user")
+        print("ctrl+c caught, shutting down")
 
     finally:
         producer.flush()
-        print("producer finished")
+        print("done")
 
 
 def main():

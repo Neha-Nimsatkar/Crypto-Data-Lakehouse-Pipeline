@@ -1,7 +1,6 @@
-# Loading Data From kafka to bronze layer in databricks volume 
-# first layer of medallion architecture -> bronze layer
-#create connection between confluent cloud and databricks for this 
-
+# pulls ticks off the kafka topic and lands them raw into the bronze delta table
+# bronze = first stop in the medallion setup, no transforms here yet
+# uses confluent cloud as the kafka source
 
 import sys
 from pyspark.sql.functions import col, from_json
@@ -23,9 +22,9 @@ try:
     API_SECRET       = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="confluent_api_secret")
     TOPIC_NAME       = "crypto_market_ticks"
 
-    print("Confluent Cloud credentials successfully parsed from secrets scope!")
+    print("got the confluent creds from the secrets scope, good to go")
 except Exception as e:
-    print(f"Could not retrieve credentials from secrets scope: {e}")
+    print(f"couldn't pull creds from secrets scope: {e}")
     raise
 
 
@@ -67,4 +66,4 @@ query = (parsed_stream_df.writeStream
     .toTable("workspace.default.crypto_bronze_table"))
 
 
-print("Stream successfully processed and data landed into Delta Lakehouse!")
+print("batch landed in bronze, done")

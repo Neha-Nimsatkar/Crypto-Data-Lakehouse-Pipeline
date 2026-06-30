@@ -1,8 +1,8 @@
 # Databricks notebook source
-#checking the silver layer tables and validating it 
+# quick sanity checks on the silver table before this feeds downstream
 
 
-print(" 1: Checking for NULLs and Outliers...")
+print("checking for nulls and price outliers...")
 
 check_1_df = spark.sql("""
     SELECT 
@@ -17,7 +17,7 @@ display(check_1_df)
 
 
 
-print(" 2: Verifying Pipeline Ingestion Delay...")
+print("checking ingestion delay per symbol...")
 
 check_2_df = spark.sql("""
     SELECT 
@@ -32,4 +32,4 @@ display(check_2_df)
 
 
 
-print(" All validation queries successfully executed!")
+print("checks done")

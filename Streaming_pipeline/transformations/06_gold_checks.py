@@ -1,8 +1,8 @@
 # Databricks notebook source
-# Gold Layer Visual Audit & Analytical Inspections
+# eyeballing the gold tables - live snapshot, hourly trend, daily rollups
 
 
-print(" 1: Fetching Latest Live State Metrics for Portfolio Assets...")
+print("1. latest snapshot, sorted by price...")
 gold_check_1_df = spark.sql("""
     SELECT 
         coin_id,
@@ -17,7 +17,7 @@ display(gold_check_1_df)
 
 
 
-print(" 2: Fetching Rolling Trend Analytics Monitor (Last 1 Hour)...")
+print("2. last hour of price performance data...")
 gold_check_2_df = spark.sql("""
     SELECT
         event_timestamp,
@@ -35,7 +35,7 @@ display(gold_check_2_df)
 
 
 
-print(" 3: Fetching Multi-Day Accumulated Structural Trends...")
+print("3. daily trends rollup...")
 gold_check_3_df = spark.sql("""
     SELECT
         date,
@@ -51,4 +51,4 @@ display(gold_check_3_df)
 
 
 
-print(" Gold analytical inspections completed successfully! Data Lakehouse layers are fully verified.")
+print("all good, gold layer checks done")

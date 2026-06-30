@@ -1,6 +1,6 @@
-#it is a notebook 
-# medallion architecture transforming from silver layer to gold layer 
-#gold layer data will be stored in aws S3 bucket
+# notebook
+# silver to gold: builds out 3 gold tables (latest snapshot, price performance w/ moving avg, daily trends)
+# gold lands in s3, foreachBatch handles the fan-out to all 3 tables per micro-batch
 
 
 from pyspark.sql import functions as F
@@ -96,4 +96,4 @@ query_gold = streaming_silver_df.writeStream \
 
 query_gold.awaitTermination()
 
-print(" Gold Layer Transformations Completed")
+print("gold layer done")
