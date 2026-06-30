@@ -1,9 +1,11 @@
+#Fetches near real time cryptocurrency data from CoinGecko api 
+
 import json
 import time
 import random
 from confluent_kafka import Producer
 
-# 15 coins tracked across the pipeline
+
 EXPECTED_COINS = [
     "bitcoin", "ethereum", "solana", "ripple", "cardano", "dogecoin",
     "polkadot", "polygon", "shiba-inu", "avalanche-2", "chainlink",
@@ -18,13 +20,11 @@ BASE_PRICES = {
     "uniswap": 7.50, "litecoin": 80.0, "stellar": 0.11, "near": 5.50
 }
 
-# how long the producer runs before stopping — fits into a scheduled workflow run
-RUN_DURATION_SECONDS = 60
+
+RUN_DURATION_SECONDS = 300
 
 
 def read_config():
-    # reads kafka connection config from Databricks secrets scope
-    # falls back to local client.properties file when running outside Databricks
     try:
         from databricks.sdk.runtime import dbutils
         bootstrap_server = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="confluent_bootstrap_server")
@@ -63,10 +63,6 @@ def delivery_report(err, msg):
 
 def produce_crypto_stream(topic, config):
     producer = Producer(config)
-
-    print(f"streaming to topic: {topic}")
-    print(f"tracking {len(EXPECTED_COINS)} coins")
-    print(f"will run for {RUN_DURATION_SECONDS} seconds\n")
 
     start_time = time.time()
 

@@ -1,9 +1,8 @@
 # Databricks notebook source
-# MAGIC %md
-# MAGIC ### 📈 Step 4: Silver Layer Data Validation Gate
+#checking the silver layer tables and validating it 
 
-# COMMAND ----------
-print(" Running Audit Check 1: Checking for NULLs and Outliers...")
+
+print(" 1: Checking for NULLs and Outliers...")
 
 check_1_df = spark.sql("""
     SELECT 
@@ -15,8 +14,10 @@ check_1_df = spark.sql("""
 
 display(check_1_df)
 
-# COMMAND ----------
-print(" Running Audit Check 2: Verifying Pipeline Ingestion Delay...")
+
+
+
+print(" 2: Verifying Pipeline Ingestion Delay...")
 
 check_2_df = spark.sql("""
     SELECT 
@@ -29,5 +30,6 @@ check_2_df = spark.sql("""
 
 display(check_2_df)
 
-# COMMAND ----------
-print(" All validation queries executed successfully!")
+
+
+print(" All validation queries successfully executed!")
