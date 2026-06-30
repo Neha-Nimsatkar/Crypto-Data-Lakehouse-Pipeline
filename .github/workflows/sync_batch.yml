@@ -1,20 +1,32 @@
-- name: Checkout Code
-  uses: actions/checkout@v3
+name: Deploy and Run Crypto Streaming Pipeline
 
-- name: Setup Databricks CLI
-  run: |
-    curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
 
-- name: Sync code to Databricks Git folder
-  env:
-    DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
-    DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
-  run: |
-    databricks workspace import-dir ./Streaming_pipeline /Workspace/Repos/1492neha@gmail.com/Streaming_pipeline --overwrite
+jobs:
+  deploy-and-run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
 
-- name: Trigger Databricks Workflow Job
-  run: |
-    curl -X POST -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
-    -H "Content-Type: application/json" \
-    https://${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now \
-    -d '{"job_id": 623792115993223}'
+      - name: Setup Databricks CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+
+      - name: Sync code to Databricks Git folder
+        env:
+          DATABRICKS_HOST: ${{ secrets.DATABRICKS_HOST }}
+          DATABRICKS_TOKEN: ${{ secrets.DATABRICKS_TOKEN }}
+        run: |
+          databricks workspace import-dir ./Streaming_pipeline /Workspace/Repos/1492neha@gmail.com/Streaming_pipeline --overwrite
+
+      - name: Trigger Databricks Workflow Job
+        run: |
+          curl -X POST -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
+          -H "Content-Type: application/json" \
+          https://${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now \
+          -d '{"job_id": 623792115993223}'
