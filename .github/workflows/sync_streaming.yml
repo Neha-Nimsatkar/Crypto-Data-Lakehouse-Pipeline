@@ -1,4 +1,4 @@
-name: Deploy and Run Crypto Batch Pipeline
+name: Deploy and Run Crypto Streaming Pipeline
 
 on:
   push:
@@ -29,4 +29,4 @@ jobs:
           curl -X POST -H "Authorization: Bearer ${{ secrets.DATABRICKS_TOKEN }}" \
           -H "Content-Type: application/json" \
           https://${{ secrets.DATABRICKS_HOST }}/api/2.1/jobs/run-now \
-          -d '{"job_id": 623792115993223}'
+          -d '{"job_id": 260944840800430}'
