@@ -46,3 +46,8 @@ New Volume*.lnk
 # Java
 *.class
 *.jar
+
+
+.env
+*.credentials
+Streaming_pipeline/ingestion/client.properties

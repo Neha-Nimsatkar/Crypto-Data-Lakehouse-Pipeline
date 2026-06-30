@@ -1,0 +1,7 @@
+bootstrap.servers=your-cluster-id.region.aws.confluent.cloud:9092
+security.protocol=SASL_SSL
+sasl.mechanisms=PLAIN
+sasl.username=your-confluent-api-key
+sasl.password=your-confluent-api-secret
+session.timeout.ms=45000
+client.id=your-client-id
