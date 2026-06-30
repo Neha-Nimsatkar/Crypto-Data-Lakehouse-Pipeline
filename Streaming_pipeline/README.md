@@ -1,6 +1,6 @@
 # Crypto Data Lakehouse — Streaming Pipeline
 
-A real-time streaming pipeline that simulates live crypto ticks and runs them through a Bronze → Silver → Gold medallion architecture on Databricks Structured Streaming, with data stored in AWS S3 as Delta tables.
+A near real-time streaming pipeline that simulates live crypto ticks and runs them through a Bronze → Silver → Gold medallion architecture on Databricks Structured Streaming, with data stored in AWS S3 as Delta tables.
 
 Tracks 15 cryptocurrencies including Bitcoin, Ethereum, Solana, and Ripple — producing price and volume ticks at 5-second intervals via Kafka.
 
@@ -39,7 +39,7 @@ Each layer writes to its own path in S3 as Delta tables, registered in the Datab
 
 ## How It Runs
 
-Code is pushed to GitHub, which triggers a GitHub Actions workflow (`sync.yml`). This workflow syncs the latest code to a Databricks Git folder and then triggers a Databricks Workflow job via the Jobs API. The actual 7-task pipeline runs entirely inside Databricks as a chained streaming job, with each task depending on the one before it.
+Code is pushed to GitHub, which triggers a GitHub Actions workflow (`sync_streaming.yml`). This workflow syncs the latest code to a Databricks Git folder and then triggers a Databricks Workflow job via the Jobs API. The actual 7-task pipeline runs entirely inside Databricks as a chained streaming job, with each task depending on the one before it.
 
 ```
 git push → GitHub Actions → sync code to Databricks → trigger Databricks Workflow → pipeline runs

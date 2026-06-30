@@ -39,7 +39,7 @@ Each layer writes to its own path in S3 as Delta tables, registered in the Datab
 
 ## How It Runs
 
-Code is pushed to GitHub, which triggers a GitHub Actions workflow (`sync.yml`). This workflow syncs the latest code to a Databricks Git folder and then triggers a Databricks Workflow job via the Jobs API. The actual 7-step pipeline runs entirely inside Databricks as a scheduled job.
+Code is pushed to GitHub, which triggers a GitHub Actions workflow (`sync_batch.yml`). This workflow syncs the latest code to a Databricks Git folder and then triggers a Databricks Workflow job via the Jobs API. The actual 7-step pipeline runs entirely inside Databricks as a scheduled job.
 
 ```
 git push → GitHub Actions → sync code to Databricks → trigger Databricks Workflow → pipeline runs
