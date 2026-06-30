@@ -1,253 +1,93 @@
-# Streaming Pipeline
+# Data Catalog
 
-Real-time ingestion of cryptocurrency market data from the CoinGecko API through Apache Kafka into a Medallion Architecture on AWS S3 using Spark Structured Streaming.
-
----
-
-## Overview
-
-The streaming pipeline continuously fetches live price data for **Bitcoin, Ethereum, and Solana** every 60 seconds using the CoinGecko public API. Data is published to a Kafka topic, consumed by a Spark Structured Streaming job, and written to Delta Lake tables through Bronze, Silver, and Gold medallion layers. The pipeline runs locally using Astronomer (Astro) for Airflow orchestration and Docker for Kafka infrastructure.
+This catalog serves as the definitive structural inventory and architectural registry for all data assets managed within the Crypto Data Lakehouse Pipeline. It defines where data assets live, their physical formats, update strategies, and infrastructure constraints across both localized environments and cloud-backed storage tiers.
 
 ---
 
-## Tech Stack
-
-| Component | Technology | Purpose |
-|---|---|---|
-| Orchestration | Apache Airflow (Astro) | DAG management and task scheduling |
-| Message broker | Apache Kafka + Zookeeper | Real-time event streaming |
-| Data source | CoinGecko API | Live crypto market data |
-| Stream processing | Spark Structured Streaming | Continuous Bronze, Silver, Gold writes |
-| Table format | Delta Lake | ACID transactions, schema evolution |
-| Storage | AWS S3 | Silver and Gold Delta tables |
-| Local storage | Delta Lake (local) | Bronze Delta table |
-| Runtime | Docker + Astro Runtime | Local containerised execution |
+## Table of Contents
+- [Lakehouse Asset Blueprint](#lakehouse-asset-blueprint)
+- [Bronze Layer Specifications](#bronze-layer-specifications)
+- [Silver Layer Specifications](#silver-layer-specifications)
+- [Gold Layer Specifications](#gold-layer-specifications)
+- [Infrastructure & Connection Parameters](#infrastructure--connection-parameters)
 
 ---
 
-## Architecture — Medallion Layers
+## Lakehouse Asset Blueprint
 
-### Streaming flow
+The pipeline isolates processing layers using a Medallion Architecture pattern, moving data from raw, nested event streams up to highly optimized business intelligence surfaces.
 
 ```
-CoinGecko API
-      ↓
-kafka_producer.py          (every 60 seconds)
-      ↓
-Kafka broker               (topic: crypto_prices, port: 9092)
-      ↓
-Stream_Ingestion_Bronze.py (Spark Structured Streaming)
-      ↓
-Bronze Delta table         (local — data/bronze/crypto_prices_delta)
-      ↓
-silver_transformations.py  (Spark Structured Streaming → S3)
-      ↓
-gold_transformations.py    (Spark Structured Streaming → S3)
-```
-
-### Bronze — Raw stream ingestion
-
-Spark Structured Streaming reads messages from the Kafka topic and writes raw nested coin data directly to a local Delta table.
-
-- No transformations — raw JSON structure preserved
-- Watermark of 10 minutes applied for late data handling
-- Checkpoint stored at `checkpoints/bronze_ingestion`
-
-### Silver — Cleaned and validated
-
-Reads the Bronze Delta stream, unpivots nested coin data into flat rows, and writes to S3.
-
-- Unpivots `bitcoin`, `ethereum`, `solana` objects into one row per coin per message using `stack()` expression
-- Casts and cleans all fields — price, market cap, volume, timestamps
-- Filters NULL prices
-- Applies 10-minute watermark on `event_timestamp`
-- Written in append mode to `s3a://crypto-lakehouse-neha/silver/crypto_prices_clean`
-
-### Gold — Business ready
-
-Reads Silver stream and produces three Gold Delta tables on S3:
-
-| Table | Window | Description |
-|---|---|---|
-| `gold/daily_trends` | 24-hour tumbling | Avg, max, min price and volume per coin per day |
-| `gold/price_performance` | 5-min sliding (1-min slide) | Moving average and price volatility per coin |
-| `gold/latest_snapshot` | foreachBatch upsert | Most recent price per coin — always current |
-
----
-
-## Folder Structure
-
-```
-streaming_pipeline/
-├── .astro/
-│   ├── config.yaml
-│   ├── dag_integrity_exceptions.txt
-│   └── test_dag_integrity_default.py
-├── dags/
-│   ├── .airflowignore
-│   └── airflow_dag_streaming.py       # Airflow DAG for streaming orchestration
-├── include/
-│   └── medallion/
-│       ├── silver/
-│       │   ├── silver_transformations.py  # Bronze → Silver stream
-│       │   └── silver_validation.py       # Silver quality gate
-│       └── gold/
-│           ├── gold_transformations.py    # Silver → Gold stream
-│           ├── gold_checks.py             # Gold table inspection
-│           └── gold_validations.py        # Gold business logic validation
-├── ingestion/
-│   ├── kafka_producer.py              # Publishes API data to Kafka every 60s
-│   └── Stream_Ingestion_Bronze.py     # Spark consumer → Bronze Delta
-├── plugins/
-├── tests/
-│   └── dags/
-│       └── test_dag_example.py
-├── .dockerignore
-├── .env
-├── .gitignore
-├── airflow_settings.yaml
-├── Dockerfile
-├── packages.txt
-├── requirements.txt
-└── README.md
+[ Ingestion Source ] ──► Bronze Layer (Local: data/bronze/)
+                               │
+                               ▼ (Flattening & Schema Enforcement)
+[ Cleaned & Cast ]   ──► Silver Layer (Cloud: s3a://crypto-lakehouse-neha/silver/)
+                               │
+                               ▼ (Windowing & State Aggregations)
+[ Analytical Views ] ──► Gold Layer   (Cloud: s3a://crypto-lakehouse-neha/gold/)
 ```
 
 ---
 
-## Setup
+## Bronze Layer Specifications
 
-### Prerequisites
-
-- Python 3.8+
-- Docker Desktop running
-- Astro CLI installed
-- Java JDK 11 (Amazon Corretto recommended)
-- AWS account with S3 bucket: `crypto-lakehouse-neha`
-
-### Install Astro CLI
-
-```bash
-# Windows
-winget install -e --id Astronomer.Astro
-
-# Mac
-brew install astro
-```
-
-### Environment variables
-
-Create a `.env` file inside the `streaming_pipeline/` folder:
-
-```env
-JAVA_HOME=C:/Program Files/Amazon Corretto/jdk11.0.30_7
-HADOOP_HOME=C:/hadoop
-AWS_ACCESS_KEY_ID=your_key_here
-AWS_SECRET_ACCESS_KEY=your_secret_here
-AWS_REGION=us-east-1
-S3_BUCKET=s3a://crypto-lakehouse-neha
-KAFKA_BROKER=localhost:9092
-KAFKA_TOPIC=crypto_prices
-BRONZE_PATH=data/bronze/crypto_prices_delta
-CHECKPOINT_PATH=checkpoints/bronze_ingestion
-```
-
-### Running the pipeline
-
-**Step 1 — Start Kafka and Zookeeper**
-```bash
-docker-compose up zookeeper kafka -d
-```
-
-**Step 2 — Start Airflow**
-```bash
-cd streaming_pipeline
-astro dev start
-```
-
-**Step 3 — Start the Kafka producer**
-```bash
-python ingestion/kafka_producer.py
-```
-
-**Step 4 — Start the Bronze consumer**
-```bash
-python ingestion/Stream_Ingestion_Bronze.py
-```
-
-**Step 5 — Trigger the Airflow DAG manually**
-```
-http://localhost:8080
-Login: airflow / airflow
-Trigger DAG: crypto_medallion_streaming
-```
+### Table Reference: `crypto_prices_delta`
+* **Physical Path:** `data/bronze/crypto_prices_delta`
+* **Storage Environment:** Local File System (Isolated inside Docker containers via Astro Runtime)
+* **Data Format:** Delta Lake over Raw JSON Payloads
+* **Ingestion Mechanics:**
+    * Consumed continuously via a dedicated Spark Structured Streaming task parsing live events directly out of Apache Kafka.
+    * Maintains a strict **10-minute watermark** to manage late-arriving records safely.
+    * Tracks lineage state via local checkpointing directories at `checkpoints/bronze_ingestion`.
+* **Business Purpose:** Acts as the permanent, immutable ledger of the raw API output payload. No transformations are applied here.
 
 ---
 
-## Airflow DAG — Task Dependencies
+## Silver Layer Specifications
 
-```
-[run_silver_stream]   >>  [validate_silver_data]
-[run_gold_stream]     >>  [validate_gold_data]
-```
-
-Silver and Gold streams run in parallel. Each validation task runs only after its respective stream job completes.
-
-> **Note:** `schedule_interval=None` — this DAG is triggered manually only. Streaming jobs are long-running processes; Airflow manages their execution and validation sequence.
-
----
-
-## Data Schema
-
-### Kafka message format
-
-```json
-{
-  "bitcoin":  { "usd": 65000.0, "usd_market_cap": 1.2e12, "usd_24h_vol": 3.2e10, "last_updated_at": 1713456789 },
-  "ethereum": { "usd": 3100.0,  "usd_market_cap": 3.7e11, "usd_24h_vol": 1.5e10, "last_updated_at": 1713456789 },
-  "solana":   { "usd": 145.0,   "usd_market_cap": 6.5e10, "usd_24h_vol": 2.1e9,  "last_updated_at": 1713456789 },
-  "ingestion_metadata": { "source": "CoinGecko API", "ingested_at": "2024-04-18T12:34:56" }
-}
-```
-
-### Silver — Flattened fields
-
-| Field | Type | Description |
-|---|---|---|
-| `coin_id` | string | `bitcoin`, `ethereum`, or `solana` |
-| `price_usd` | double | Price in USD |
-| `market_cap` | double | Market capitalisation |
-| `volume_24h` | double | 24-hour trading volume |
-| `event_timestamp` | timestamp | When the price was recorded |
-| `ingested_at` | timestamp | When the message was produced |
+### Table Reference: `crypto_prices_clean`
+* **Physical Path:** `s3a://crypto-lakehouse-neha/silver/crypto_prices_clean`
+* **Storage Environment:** Cloud Storage (AWS S3 Bucket: `crypto-lakehouse-neha`)
+* **Data Format:** Optimized Delta Lake Table Format
+* **Transformation Logic:**
+    * Utilizes a high-performance Spark SQL **`stack(3, ...)` expression** to dynamically unpivot nested coin structures (`bitcoin`, `ethereum`, `solana`) from a single Kafka packet into independent transactional row entries.
+    * Filters out payload anomalies where spot prices evaluate to `NULL`.
+    * Derives tracking metrics like `ingestion_delay_seconds` (`ingested_at` minus `event_timestamp`) to actively measure pipeline line-lag.
+* **Update Frequency:** Spark Structured Streaming executing in continuous `Append` mode, coordinated by Airflow task tracking.
 
 ---
 
-## Data Quality Gates
+## Gold Layer Specifications
 
-| Layer | File | Checks |
-|---|---|---|
-| Silver | `silver_validation.py` | Integrity, coin coverage, freshness, volume, anomaly detection |
-| Gold | `gold_validations.py` | Snapshot freshness, windowing integrity, cross-layer sync, analytics completeness |
+Analytical data layers optimized for consumption by reporting tools and data quality inspection tasks. All gold assets reside securely in cloud Parquet layouts on AWS S3.
 
----
+### 1. `gold/daily_trends`
+* **Physical Path:** `s3a://crypto-lakehouse-neha/gold/daily_trends`
+* **Window Model:** **Tumbling Window (Fixed, non-overlapping 24-hour periods)**
+* **Aggregation Targets:** Evaluates the `daily_avg_price`, `daily_max_price`, `daily_min_price`, and `daily_avg_volume` grouped per asset token per calendar day.
 
-## Pipeline Status
+### 2. `gold/price_performance`
+* **Physical Path:** `s3a://crypto-lakehouse-neha/gold/price_performance`
+* **Window Model:** **Sliding Window (5-minute window duration, advancing on a 1-minute slide interval)**
+* **Aggregation Targets:** Computes real-time rolling metrics including a moving average (`moving_avg_price`) and dynamic price volatility tracking (rolling standard deviation).
 
-| Component | Status |
-|---|---|
-| Kafka producer | Complete — publishes every 60s |
-| Bronze Delta stream | Complete — local Delta table written |
-| Silver transformation stream | Complete — writing to S3 |
-| Gold transformation streams | Complete — 3 tables on S3 |
-| Airflow DAG | Complete — manual trigger configured |
-
----
-
-## Architecture Diagram
-
-See [`docs/architecture/03_streaming_flow.png`](../docs/architecture/03_streaming_flow.png) for the full streaming pipeline flow diagram.
+### 3. `gold/latest_snapshot`
+* **Physical Path:** `s3a://crypto-lakehouse-neha/gold/latest_snapshot`
+* **Execution Strategy:** Continuous state evaluation managed via a PySpark **`foreachBatch`** output stream loop.
+* **Upsert Logic:** Runs an atomic conditional `MERGE INTO` operation on every micro-batch iteration. This enforces a strict partition pattern that ensures the table always holds exactly **one row per coin** containing its absolute latest spot valuation.
 
 ---
 
-*Part of the Crypto Data Lakehouse Pipeline — built with Kafka, Spark Structured Streaming, Delta Lake and AWS S3.*
+## Infrastructure & Connection Parameters
 
+To guarantee pipeline consistency and block runtime compilation failures, all storage paths map back to these verified network configurations:
+
+| Parameter Key | Runtime System Configuration | Purpose |
+| :--- | :--- | :--- |
+| `KAFKA_BROKER` | `localhost:9092` | Localized ingestion broker port mapping. |
+| `KAFKA_TOPIC` | `crypto_prices` | Main event log topic containing incoming API ticks. |
+| `S3_BUCKET` | `s3a://crypto-lakehouse-neha` | Root cloud target URI passing through Hadoop file connectors. |
+| `AWS_REGION` | `us-east-1` | Cloud availability boundary hosting analytics tables. |
+
+---
+*Last updated: April 2026 — Crypto Data Lakehouse Pipeline Catalog Reference*
