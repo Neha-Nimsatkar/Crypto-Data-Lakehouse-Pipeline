@@ -11,17 +11,17 @@ try:
 except Exception as e:
     pass
 
-# ── 🔐 STEP 2: DIRECT EXTRACTION FROM SECURE TASK PARAMETERS ARRAY ──
+# ── 🔐 STEP 2: CREDENTIALS FROM DATABRICKS SECRETS SCOPE ──
 try:
-    # sys.argv[0] is the script path. 1, 2, 3 are your Confluent credentials.
-    BOOTSTRAP_SERVER = sys.argv[1].replace('"', '').replace("'", "").strip()
-    API_KEY          = sys.argv[2].replace('"', '').replace("'", "").strip()
-    API_SECRET       = sys.argv[3].replace('"', '').replace("'", "").strip()
+    from databricks.sdk.runtime import dbutils
+    BOOTSTRAP_SERVER = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="confluent_bootstrap_server")
+    API_KEY          = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="confluent_api_key")
+    API_SECRET       = dbutils.secrets.get(scope="crypto-pipeline-secrets", key="confluent_api_secret")
     TOPIC_NAME       = "crypto_market_ticks"
-    
-    print("🔒 Confluent Cloud credentials successfully parsed from secure array injection!")
-except IndexError:
-    print("❌ Critical: Please ensure you have passed exactly 3 strings in the Task Parameter array.")
+
+    print("🔒 Confluent Cloud credentials successfully parsed from secrets scope!")
+except Exception as e:
+    print(f"❌ Critical: Could not retrieve credentials from secrets scope: {e}")
     raise
 
 # Confluent Shaded Configuration Matrix for Serverless Compute Runtime

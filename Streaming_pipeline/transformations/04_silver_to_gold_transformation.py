@@ -95,9 +95,8 @@ query_gold = streaming_silver_df.writeStream \
     .option("checkpointLocation", GOLD_CHECKPOINT) \
     .trigger(availableNow=True) \
     .start()
-    
+
 # ── MAGIC LINE: Enforces the script to wait until the execution stream safely ends ──
 query_gold.awaitTermination()
 
-query_gold.awaitTermination()
 print(" Gold Layer Cascade Complete! All 3 analytical targets updated successfully.")

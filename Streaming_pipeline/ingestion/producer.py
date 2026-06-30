@@ -19,7 +19,7 @@ BASE_PRICES = {
 }
 
 # how long the producer runs before stopping — fits into a scheduled workflow run
-RUN_DURATION_SECONDS = 300
+RUN_DURATION_SECONDS = 60
 
 
 def read_config():
