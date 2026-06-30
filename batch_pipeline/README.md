@@ -1,186 +1,131 @@
-# Batch Pipeline
+# Crypto Data Lakehouse — Batch Pipeline
 
-Hourly ingestion of cryptocurrency market data from the CoinGecko API into a Medallion Architecture on AWS S3 and Databricks.
+A batch ETL pipeline that pulls live crypto prices from the CoinGecko API and runs them through a Bronze → Silver → Gold medallion architecture on Databricks, with data stored in AWS S3 as Delta tables.
 
----
+Tracks 15 cryptocurrencies including Bitcoin, Ethereum, Solana, and Ripple — fetching price, market cap, and 24h volume at regular intervals.
 
-## Overview
-
-The batch pipeline fetches real-time price data for **Bitcoin, Ethereum, and Solana** every hour using the CoinGecko public API. Raw data is uploaded to AWS S3 and progressively refined through Bronze, Silver, and Gold layers following the Medallion Architecture pattern. All transformations run on Databricks using PySpark and Delta Lake. The pipeline is orchestrated by Apache Airflow running on Astronomer (Astro).
-
----
-
-## Tech Stack
-
-| Component | Technology | Purpose |
-|---|---|---|
-| Orchestration | Apache Airflow (Astro) | Hourly DAG scheduling |
-| Data source | CoinGecko API | Real-time crypto market data |
-| Ingestion | Python + Boto3 | Fetch and upload raw JSON to S3 |
-| Storage | AWS S3 | Raw Bronze layer data lake |
-| Processing | Databricks + PySpark | Silver and Gold transformations |
-| Table format | Delta Lake | ACID transactions, time travel |
-| Validation | PySpark | Quality checks at each layer |
-
----
-
-## Architecture — Medallion Layers
-
-### Bronze — Raw ingestion
-
-Stores raw, unmodified JSON responses from the CoinGecko API. Each file is timestamped and stored at:
+## Architecture
 
 ```
-s3://crypto-lakehouse-neha/bronze/batch_YYYYMMDD_HHMMSS.json
+CoinGecko API
+      |
+      v
+01_Ingestion (crypto_api_fetch.py)
+      |
+      v
+02_Bronze_Validation (bronze_validation.py)
+      |
+      v
+03_Bronze_To_Silver (bronze_to_silver.py)
+      |
+      v
+04_Silver_Validation (silver_validation.py)
+      |
+      v
+05_Silver_To_Gold (silver_to_gold.py)
+      |
+      v
+06_Gold_Validation (gold_validations.py)
+      |
+      v
+07_Gold_Checks (gold_checks.py)
 ```
 
-- No transformations applied — data stored exactly as received
-- Ingestion metadata (source, timestamp) appended to each record
-- Quality gate validates JSON integrity, schema contract, and NULL prices
+Each layer writes to its own path in S3 as Delta tables, registered in the Databricks Unity Catalog.
 
-### Silver — Cleaned and validated
+## How It Runs
 
-Reads Bronze JSON files, flattens the nested structure, and applies transformations:
+Code is pushed to GitHub, which triggers a GitHub Actions workflow (`sync.yml`). This workflow syncs the latest code to a Databricks Git folder and then triggers a Databricks Workflow job via the Jobs API. The actual 7-step pipeline runs entirely inside Databricks as a scheduled job.
 
-- Flattens nested coin objects into structured rows (one row per coin per timestamp)
-- Adds `price_change_flag` to indicate directional price movement (UP / DOWN / STABLE)
-- Computes `ingestion_delay_seconds` for lineage tracking
-- Partitioned by `date` for optimised query performance
-- Written as Delta Lake table: `workspace.default.silver_crypto_prices`
+```
+git push → GitHub Actions → sync code to Databricks → trigger Databricks Workflow → pipeline runs
+```
 
-### Gold — Business ready
+This run history below shows the full job — all 7 tasks succeeded, with each task depending on the one before it.
 
-Produces three analytics-ready Delta tables from Silver data:
+![Databricks job run](screenshots/databricks_job_run.png)
 
-| Table | Description |
-|---|---|
-| `gold_latest_snapshot` | Most recent price, market cap and volume per coin |
-| `gold_price_performance` | 7-period moving average, volatility and market cap rank |
-| `gold_daily_trends` | Daily average, max and min price per coin |
-
----
-
-## Folder Structure
+## Project Structure
 
 ```
 batch_pipeline/
 ├── ingestion/
-│   └── crypto_api_fetch.py          # Fetches API data, uploads to S3
-├── medallion/
-│   ├── bronze/
-│   │   └── bronze_ingestion_notes.py  # Bronze runs inside Databricks session
-│   ├── silver/
-│   │   ├── silver_transformations.py  # Bronze → Silver transformation
-│   │   └── silver_validation.py       # Silver quality gate
-│   └── gold/
-│       ├── gold_transformations.py    # Silver → Gold transformation
-│       ├── gold_checks.py             # SQL inspection queries
-│       └── gold_validations.py        # Gold business logic validation
+│   ├── crypto_api_fetch.py       # pulls live prices from CoinGecko, writes raw JSON to bronze
+│   └── bronze_validation.py      # checks schema, nulls, and corrupt records in bronze
+├── Transformations/
+│   ├── bronze_to_silver.py       # flattens raw JSON, casts types, dedupes, adds price change flags
+│   ├── silver_validation.py      # checks duplicates, freshness, anomalies, price jumps
+│   ├── silver_to_gold.py         # builds 3 gold tables for analytics
+│   ├── gold_validations.py       # checks ranking integrity and cross-table consistency
+│   └── gold_checks.py            # SQL queries to manually verify gold tables
 └── README.md
 ```
 
----
+## What Each Layer Does
 
-## Setup
+**Bronze** — raw JSON snapshots from CoinGecko, one file per run, stored as-is for traceability.
 
-### Prerequisites
+**Silver** — cleaned and structured. Nested JSON is flattened into rows, prices are cast to proper types, duplicates are removed using `MERGE INTO`-style logic, and each row gets a `price_change_flag` (UP / DOWN / STABLE) based on the previous price for that coin.
 
-- Python 3.8+
-- AWS account with S3 bucket: `crypto-lakehouse-neha`
-- Databricks workspace with Unity Catalog enabled
-- Astro CLI installed
+**Gold** — three tables built for different use cases:
+- `gold_latest_snapshot` — most recent price per coin
+- `gold_price_performance` — 7-point moving average, volatility, and market cap rank per coin per timestamp
+- `gold_daily_trends` — daily average, max, and min price per coin
 
-### Environment variables
+## Data Quality Checks
 
-Create a `.env` file in the project root:
+Every layer has its own validation step before data moves forward:
 
-```env
-AWS_ACCESS_KEY_ID=your_key_here
-AWS_SECRET_ACCESS_KEY=your_secret_here
-AWS_REGION=us-east-1
-S3_BUCKET_NAME=crypto-lakehouse-neha
+**Bronze validation** checks for corrupt JSON, missing expected coins, null prices, and missing ingestion metadata.
+
+**Silver validation** runs 8 checks — duplicate records, null prices, valid price change flags, partition counts, data freshness against a 30-minute SLA, row counts per coin, Bitcoin price sanity range, sudden price jumps over 20%, and negative ingestion delay (clock sync issues).
+
+**Gold validation** checks that ranks are unique per timestamp, moving averages have no nulls, and that the snapshot table and performance table agree on price for the same coin.
+
+If a critical check fails, the pipeline stops rather than letting bad data flow downstream.
+
+## Authentication & Secrets
+
+GitHub connects to Databricks using a host URL and access token stored as GitHub Secrets. Databricks connects to AWS S3 using credentials stored in a Databricks secrets scope, with environment variables as a local fallback for testing outside Databricks. No credentials are ever hardcoded in the pipeline scripts.
+
+## Storage on S3
+
+Data lands in S3 as Delta tables, organized by layer:
+
+```
+s3://crypto-lakehouse-nehaa/
+├── bronze/
+├── silver/
+└── gold/
+    ├── latest_snapshot/
+    ├── price_performance/
+    └── daily_trends/
 ```
 
-### Running the pipeline
+![S3 bucket structure](screenshots/s3_bucket_structure.png)
 
-**Step 1 — Install dependencies**
-```bash
-pip install -r requirements.txt
-```
+![Gold layer folders](screenshots/s3_gold_folders.png)
 
-**Step 2 — Start Airflow**
-```bash
-astro dev start
-```
+## Sample Output
 
-**Step 3 — Open Airflow UI**
-```
-http://localhost:8080
-Login: airflow / airflow
-Enable DAG: crypto_databricks_pipeline
-```
+**Latest snapshot — top coins by market cap**
 
-The DAG runs automatically every hour. You can also trigger it manually from the Airflow UI.
+![Latest snapshot](screenshots/gold_latest_snapshot.png)
 
----
+**Price performance — moving average and volatility**
 
-## Data Schema
+![Price performance](screenshots/gold_price_performance.png)
 
-### Bronze — Raw JSON fields
+**Daily trends — average, max, min per coin**
 
-| Field | Type | Description |
-|---|---|---|
-| `bitcoin.usd` | float | Bitcoin price in USD |
-| `bitcoin.usd_market_cap` | float | Bitcoin market capitalisation |
-| `bitcoin.usd_24h_vol` | float | Bitcoin 24-hour trading volume |
-| `ethereum.usd` | float | Ethereum price in USD |
-| `solana.usd` | float | Solana price in USD |
-| `ingestion_metadata.source` | string | Always `CoinGecko API` |
-| `ingestion_metadata.ingested_at` | timestamp | UTC timestamp of ingestion |
+![Daily trends](screenshots/gold_daily_trends.png)
 
-### Silver — Transformed fields
+## Tech Stack
 
-| Field | Type | Description |
-|---|---|---|
-| `coin_id` | string | `bitcoin`, `ethereum`, or `solana` |
-| `price_usd` | float | Price in USD |
-| `market_cap` | float | Market capitalisation in USD |
-| `volume_24h` | float | 24-hour trading volume |
-| `event_timestamp` | timestamp | When the price was recorded |
-| `price_change_flag` | string | `UP`, `DOWN`, or `STABLE` |
-| `ingestion_delay_seconds` | float | Delay between event and ingestion |
-| `date` | date | Partition column |
+Python, PySpark (Spark SQL), Databricks Workflows, Delta Lake, AWS S3, Boto3, GitHub Actions, CoinGecko API
 
----
+## Notes
 
-## Data Quality Gates
-
-Each layer has a dedicated validation script acting as a quality gate before data is promoted to the next layer.
-
-| Layer | File | Checks |
-|---|---|---|
-| Bronze | `bronze_ingestion_notes.py` | JSON integrity, schema contract, NULL prices, freshness |
-| Silver | `silver_validation.py` | Duplicates, NULL prices, SLA freshness, anomaly detection, price stability |
-| Gold | `gold_validations.py` | Ranking integrity, moving average completeness, cross-table sync |
-
----
-
-## Pipeline Status
-
-| Component | Status |
-|---|---|
-| CoinGecko API ingestion | Complete |
-| Bronze Delta layer | Complete — Delta files verified in S3 |
-| Silver transformations | Complete — running on Databricks |
-| Gold aggregations | Complete — 3 tables produced |
-| Airflow DAG | Complete — hourly schedule configured |
-
----
-
-## Architecture Diagram
-
-See [`docs/architecture/04_batch_flow.png`](../docs/architecture/04_batch_flow.png) for the full batch pipeline flow diagram.
-
----
-
-*Part of the Crypto Data Lakehouse Pipeline — built with PySpark, Delta Lake, Apache Airflow and AWS S3.*
+- Runs on Databricks Free Edition / Serverless compute
+- AWS credentials are pulled from Databricks secrets scope, with a local `.env` fallback for testing outside Databricks
+- `display()` calls inside the scripts are Databricks-native and won't run outside a Databricks notebook environment
