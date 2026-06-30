@@ -40,7 +40,7 @@ def process_gold_tables(df_micro_batch, batch_id):
     # In near real-time, snapshot is a state table, so we overwrite or merge it
     df_snapshot.write \
         .format("delta") \
-        .mode("overwrite") \
+        .mode("append") \
         .option("path", PATH_GOLD_SNAPSHOT) \
         .saveAsTable(GOLD_SNAPSHOT)
 
