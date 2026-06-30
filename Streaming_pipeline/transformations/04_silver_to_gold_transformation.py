@@ -86,9 +86,9 @@ def process_gold_tables(df_micro_batch, batch_id):
 
 
 # ── STEP 2: TRIGGER THE STREAMING PIPELINE ───────────────────────────────────
-streaming_silver_df = spark.readStream
+streaming_silver_df = (spark.readStream
 .option("ignoreChanges", "true")
-.table("workspace.default.silver_crypto_prices")
+.table("workspace.default.silver_crypto_prices"))
 
 GOLD_CHECKPOINT = "/Volumes/workspace/default/crypto_silver_volume/checkpoints/gold_cascade_stream/"
 
