@@ -1,123 +1,164 @@
 # Crypto Data Lakehouse Pipeline
 
-An end-to-end data lakehouse project implementing both **Batch** and **Near Real-Time Streaming** pipelines to ingest, transform, validate, and analyze cryptocurrency market data. 
+An end-to-end data lakehouse project implementing both **Batch** and **Near Real-Time Streaming** pipelines to ingest, transform, validate, and analyze cryptocurrency market data.
 
-The project follows the **Medallion Architecture (Bronze → Silver → Gold)** on Databricks with data stored as Delta tables in AWS S3 and managed via Unity Catalog Volumes. It tracks 15 major cryptocurrencies (including Bitcoin, Ethereum, Solana, and Ripple) across two ingestion modes: hourly batch snapshots from the CoinGecko API and high-frequency live ticks via Kafka.
+The project follows the **Medallion Architecture (Bronze → Silver → Gold)** on Databricks, with data stored as Delta tables in AWS S3 and managed via Unity Catalog. It tracks 15 major cryptocurrencies — including Bitcoin, Ethereum, Solana, and Ripple — across two ingestion modes: on-demand batch snapshots from the CoinGecko API and simulated near real-time ticks via Confluent Cloud Kafka.
 
 <br>
 
 ## Architecture Overview
 
-This lakehouse unifies two distinct processing paradigms under a single cloud storage and governance layer:
+Both pipelines share the same cloud storage layer and medallion design, but differ in how data enters the system.
 
 ```
-[ Batch Ingestion ] ----> CoinGecko API ----> Databricks Job (Hourly) ---\
-                                                                          +--> [ Medallion Layers ] --> AWS S3 (Delta Lake)
-[ Streaming Ingestion ] -> Kafka Producer -> Confluent Cloud Kafka ------/     (Bronze -> Silver -> Gold)
+[ Batch ]     CoinGecko API  →  Databricks Workflow  →  S3 Bronze (JSON)  →  Silver (Delta)  →  Gold (Delta)
+[ Streaming ] Producer (sim) →  Confluent Kafka      →  Bronze (Delta)    →  Silver (Delta)  →  Gold (Delta)
 ```
+
+Both triggered via GitHub Actions on push to main → Databricks Git sync → Databricks Workflow execution.
+
+<br>
 
 ### Overall System Layout
-![Overall System Layout](docs/architecture/01_overall_architecture.png)
+
+![Overall Architecture](docs/architecture/overall_architecture.png)
+
+<br>
 
 ### Medallion Data Boundaries
-![Medallion Data Boundaries](docs/architecture/02_medallion_layers.png)
+
+![Medallion Architecture](docs/architecture/medallion_architecture.png)
 
 <br>
 <br>
 
 ## Project Structure
 
-The repository isolates the two independent processing pipelines while sharing unified system documentation and data definitions:
-
 ```
 Crypto-Data-Lakehouse-Pipeline/
 ├── .github/workflows/
-│   ├── sync_batch.yml               # CI/CD workflow for the batch pipeline
-│   └── sync_streaming.yml           # CI/CD workflow for the streaming pipeline
-├── batch_pipeline/                  # Hourly batch ETL engine (CoinGecko API -> S3)
-│   ├── ingestion/                   # API consumers and raw schema validation
-│   ├── Transformations/             # Medallion processing and data quality checks
-│   └── README.md                    # Detailed batch deployment guide
-├── streaming_pipeline/              # Near real-time engine (Kafka -> Structured Streaming)
-│   ├── ingestion/                   # Event simulation and Kafka producers
-│   ├── transformations/             # Micro-batch transformations and lag checks
-│   └── README.md                    # Detailed streaming deployment guide
-├── docs/                            # Unified project documentation
-│   ├── architecture/                # System, batch, streaming, and Airflow DAG diagrams
-│   ├── data_catalog.md              # Target Delta table definitions and locations
-│   └── data_dictionary.md           # Column types, constraints, and descriptions
-└── requirements.txt                 # Shared Python dependencies
+│   ├── sync_batch.yml               # triggers on push to main — syncs batch pipeline and runs Databricks job
+│   └── sync_streaming.yml           # triggers on push to main — syncs streaming pipeline and runs Databricks job
+├── batch_pipeline/                  # batch ETL engine — CoinGecko API → S3 Delta tables
+│   ├── ingestion/                   # API fetch and bronze validation
+│   ├── Transformations/             # bronze→silver→gold transformations and quality checks
+│   └── README.md                    # batch pipeline setup and run guide
+├── streaming_pipeline/              # near real-time engine — Kafka → Spark Structured Streaming → S3
+│   ├── ingestion/                   # simulated producer and Kafka config
+│   ├── transformations/             # micro-batch transformations and gold aggregations
+│   └── README.md                    # streaming pipeline setup and run guide
+├── docs/
+│   ├── architecture/                # all architecture and flow diagrams
+│   ├── data_catalog.md              # Delta table definitions, paths, and update strategies
+│   └── data_dictionary.md           # field-level definitions across both pipelines
+└── requirements.txt
 ```
 
 <br>
 <br>
 
-## Pipeline Mechanics & Data Flows
+## Pipeline Mechanics
 
-### 1. Batch Pipeline (`/batch_pipeline`)
-* **Ingestion:** Fetches structured JSON snapshots from the CoinGecko API at regular intervals (`crypto_api_fetch.py`).
-* **Processing Flow:** Data paths move sequentially from raw JSON captures down to structured analytical representations.
-* **Orchestration:** Scheduled via Databricks Workflows, running a 7-task linear dependency chain.
+### Batch Pipeline
 
-![Batch Flow](docs/architecture/04_batch_flow.png)
+**Ingestion:** Fetches structured JSON snapshots from the CoinGecko public API (`crypto_api_fetch.py`). Raw JSON is written directly to `s3://crypto-lakehouse-nehaa/bronze/` — one timestamped file per run, stored as-is for traceability.
 
-### 2. Streaming Pipeline (`/streaming_pipeline`)
-* **Ingestion:** A custom mock producer simulates real-time price changes within a $\pm1\%$ variance baseline and streams records to Confluent Cloud Kafka topics at 5-second intervals.
-* **Processing Flow:** Structured Streaming jobs process available records using micro-batches.
-* **Execution Strategy:** Configured with PySpark's `.trigger(availableNow=True)` setting. This provides the architectural benefits of streaming (state management, checkpointing, event-time processing) with the cost efficiency of batch execution profiles.
+**Processing:** A 7-task sequential Databricks Workflow handles bronze validation → silver transformation → silver validation → gold aggregation → gold validation → gold checks.
 
-![Streaming Flow](docs/architecture/03_streaming_flow.png)
+**Orchestration:** Triggered by GitHub Actions on any push to `main`. GitHub Actions syncs code to Databricks Git folder and fires the workflow via the Databricks Jobs API.
+
+![Batch Pipeline Flow](docs/architecture/batch_pipeline_flow.png)
+
+<br>
+
+### Streaming Pipeline
+
+**Ingestion:** A custom producer (`producer.py`) simulates live price ticks for 15 coins — prices are randomised within ±1% of CoinGecko-sourced baseline values, published to Confluent Cloud Kafka topic `crypto_market_ticks` every 5 seconds, running for a fixed duration before stopping.
+
+**Processing:** Spark Structured Streaming jobs consume available Kafka messages and process them through bronze → silver → gold using `trigger(availableNow=True)` — this processes all currently available data and then stops, giving the cost efficiency of batch execution while using the streaming engine's state management and checkpointing capabilities.
+
+**Orchestration:** Same GitHub Actions → Databricks Git sync → Jobs API pattern as batch. Producer runs as the first task in the Databricks Workflow, followed by the 6 transformation tasks.
+
+![Streaming Pipeline Flow](docs/architecture/streaming_pipeline_flow.png)
 
 <br>
 <br>
 
-## Core Medallion Design
+## Medallion Design
 
-Both pipelines isolate data transformation phases to guarantee a clean balance between raw auditability and optimized analytical performance:
+| Layer | Batch | Streaming |
+|---|---|---|
+| **Bronze** | Raw JSON files in S3 (`s3://crypto-lakehouse-nehaa/bronze/`). One file per run, no transformation applied. | Raw Kafka ticks written to Delta table `workspace.default.crypto_bronze_table` via Structured Streaming. |
+| **Silver** | Flattened, type-cast, deduplicated on `(coin_id, event_timestamp)`. Adds `price_change_flag` (UP / DOWN / STABLE) via lag window. Partitioned by `date` at `s3://crypto-lakehouse-nehaa/silver/`. | Same flattening and casting logic. Bitcoin price sanity check applied. No `price_change_flag` — not computed in streaming. Written to managed Delta table `workspace.default.silver_crypto_prices`. |
+| **Gold** | Three tables written via overwrite/append modes, partitioned by `date`. Stored at `s3://crypto-lakehouse-nehaa/gold/`. | Three tables written via `foreachBatch` on each micro-batch. Stored at `s3://crypto-lakehouse-nehaa/gold_stream/`. |
 
-| Layer | Implementation Details | Purpose |
-| :--- | :--- | :--- |
-| **Bronze** | Raw data formats (Unflattened API JSON or raw Kafka payloads). | Permanent, immutable audit trail of every source record. |
-| **Silver** | Cleaned, deduplicated on `(coin_id, timestamp)`, type-cast, and enhanced with derived features like `price_change_flag` (UP / DOWN / STABLE). | Clean corporate data truth for general-purpose querying. |
-| **Gold** | Processed via `MERGE INTO` or `foreachBatch` into three analytical targets:<br>• `latest_snapshot`: Absolute current price per coin.<br>• `price_performance`: Volatility tracking and a 7-point moving average.<br>• `daily_trends`: Aggregated high, low, and average values. | Power-user analytics and operational dashboards. |
-
-<br>
-<br>
-
-## Data Quality, Testing & Governance
-
-Data cannot progress to downstream layers unless it passes strict, automated validation thresholds executed as dedicated notebook stages within your Databricks workflows:
-
-* **Ingestion Audits:** Validates data structures against rigid schema definitions, catches corrupt payloads, and tracks ingestion lag metrics.
-* **Data Sanity Checks:** Ensures structural parameters are met (e.g., verifying that Bitcoin ranges track reasonably, checking that market cap rankings contain no duplicate positions per timestamp, and asserting that moving averages yield no `null` fields).
-* **Cross-Table Verification:** Confirms that individual analytical targets (like a snapshot view vs. a long-term performance table) stay completely synchronized during state transitions.
+**Gold tables (both pipelines):**
+- `latest_snapshot` — most recent price per coin, overwritten every run
+- `price_performance` — 7-row rolling average, volatility (std dev), and market cap rank per coin per timestamp
+- `daily_trends` — daily average, max, min price and volume per coin
 
 <br>
 <br>
 
-## CI/CD Deployment Sync
+## Data Quality
 
-Code distribution handles deployment seamlessly across environments without continuous manual file staging via dedicated GitHub Actions workflows:
+Every layer has a dedicated validation step. Data cannot move forward if a critical check fails.
+
+**Bronze validation** checks for corrupt JSON records, missing expected coin columns, null prices, and missing ingestion metadata timestamps.
+
+**Silver validation** runs 8 checks — null prices, duplicate records, valid price change flags (batch), data freshness against a 30-minute SLA (batch), row counts per coin, Bitcoin price sanity range ($10k–$250k), sudden price jumps over 20%, and negative ingestion delay (clock sync issues).
+
+**Gold validation** checks that market cap ranks are unique per timestamp, moving averages have no nulls, and that the snapshot and performance tables agree on Bitcoin's price within a small tolerance.
+
+<br>
+<br>
+
+## CI/CD & Secrets
+
+### Deployment Flow
+
+Both GitHub Actions workflows trigger on any push to `main`. They sync pipeline code to a Databricks Git folder and trigger the corresponding Databricks Workflow job via the Jobs API.
 
 ```
-Developer Push → GitHub Repository → GitHub Actions Workflow → Databricks Git Volumes Sync → Jobs API Trigger
+git push → GitHub Actions → Databricks Git folder sync → Jobs API → Databricks Workflow runs
 ```
 
-* **`sync_batch.yml`:** Catches any code modifications made inside the `/batch_pipeline` directory. It handles the authorization handshake with your Databricks workspace using stored GitHub Secrets (Host URL and Personal Access Token) to sync the latest assets directly into a Databricks Git folder. Once staged, it hits the Databricks Jobs API to trigger the batch pipeline.
-* **`sync_streaming.yml`:** Monitors alterations inside the `/streaming_pipeline` directory. It utilizes the same tokenized authorization flow to update the streaming source files and automatically run the chained streaming tasks.
+![CI/CD and Secrets Flow](docs/architecture/cicd_secrets_flow.png)
+
+### Credential Management
+
+No credentials are hardcoded anywhere in the pipeline.
+
+- **GitHub → Databricks:** `DATABRICKS_HOST` and `DATABRICKS_TOKEN` stored as GitHub Secrets
+- **Databricks → Confluent Cloud Kafka:** API key and secret stored in Databricks secrets scope `crypto-pipeline-secrets`, fetched at runtime via `dbutils.secrets.get()`
+- **Databricks → AWS S3:** Managed via Databricks Unity Catalog cloud connection and secrets scope — no explicit key injection in transformation code
 
 <br>
 <br>
 
-## Infrastructure Connections & Secret Handshakes
+## Tech Stack
 
-To eliminate hardcoded credentials completely, the lakehouse relies on a secure cloud handshake mesh across all moving parts:
+| Tool | Role |
+|---|---|
+| Python | Ingestion scripts, producer simulation, transformation logic |
+| PySpark / Spark SQL | All transformations, window functions, streaming engine |
+| Spark Structured Streaming | Near real-time bronze → silver → gold processing |
+| Apache Kafka (Confluent Cloud) | Message broker for streaming pipeline |
+| Delta Lake | Storage format for all Silver and Gold tables |
+| AWS S3 | Physical storage for all pipeline outputs |
+| Databricks Workflows | Pipeline orchestration and task dependency management |
+| Databricks Unity Catalog | Table registration, governance, and secrets management |
+| GitHub Actions | CI/CD — code sync and workflow triggering on push |
+| CoinGecko API | Live crypto price data source for batch pipeline |
 
-* **Kafka Connection Handshake:** The real-time streaming workers read configurations from a gitignored `client.properties` setup locally. When running on Databricks, the authentication details are securely pulled out of the `crypto-pipeline-secrets` secret scope to connect to Confluent Cloud Kafka topics.
-* **AWS S3 Storage Handshake:** Access to target S3 storage buckets is authenticated natively via structured Unity Catalog storage connections and cloud credentials configured in Databricks, fallback-supported by local environment variables for isolated testing.
-* **Compute Profiles:** Pipelines are lightweight and fully optimized to execute entirely over cost-efficient, temporary serverless compute setups or single-node clusters on the Databricks Free / Community Tier ecosystem.
+<br>
+<br>
 
----
+## Documentation
 
-### Deep Dives
-For specific implementation code, execution run screenshots, or setup rules, check out the dedicated readmes inside the **[Batch Pipeline](./batch_pipeline/README.md)** and **[Streaming Pipeline](./streaming_pipeline/README.md)** directories.
+| Document | Description |
+|---|---|
+| [Batch Pipeline README](./batch_pipeline/README.md) | Batch pipeline setup, run guide, screenshots, and file-level explanations |
+| [Streaming Pipeline README](./streaming_pipeline/README.md) | Streaming pipeline setup, run guide, architecture notes, and sample outputs |
+| [Data Catalog](./docs/data_catalog.md) | All Delta table definitions, S3 paths, update strategies, and infrastructure reference |
+| [Data Dictionary](./docs/data_dictionary.md) | Field-level definitions, types, derivation logic, and technical term glossary |
